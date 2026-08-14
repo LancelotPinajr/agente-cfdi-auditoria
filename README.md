@@ -50,12 +50,15 @@ pide paso a paso.
 | Pieza | Estado |
 |---|---|
 | Serialización canónica `CORD-CANON-1` | ✅ implementada y congelada |
-| Generador de CFDI sintéticos | 🚧 |
-| Lector de CFDI XML | 🚧 |
+| Generador de CFDI sintéticos | ✅ |
+| Lector de CFDI 4.0 | ✅ |
+| Fuente de libros (sintética + CØRD Fiscal) | ✅ |
 | Bitácora encadenada | ⬜ Sprint 2 |
 | Registro de cesiones | ⬜ Sprint 2 |
 | Merkle + anclaje | ⬜ Sprint 2 |
 | Agente ADK + Gemini en Cloud Run | ⬜ carril de infraestructura |
+
+169 pruebas, sin dependencias de terceros salvo `httpx` para el cliente HTTP.
 
 ---
 
@@ -93,9 +96,24 @@ conforme al CFF art. 30.
 
 ---
 
+## Cambiar la fuente de libros
+
+Sin configurar nada corre contra la fuente sintética. Para leer los libros
+reales desde CØRD Fiscal:
+
+```bash
+export AGENTE_CFDI_FUENTE=cord_fiscal
+export CORD_FISCAL_URL=https://api.cordgroup.cloud
+export CORD_FISCAL_TOKEN=...   # de Secret Manager, nunca del repo
+```
+
 ## Documentación
 
 - [ADR 0001 — Serialización canónica `CORD-CANON-1`](docs/adr/0001-serializacion-canonica.md)
+- [ADR 0003 — Lectura de CFDI](docs/adr/0003-lectura-de-cfdi.md)
+- [Contrato de datos del expediente](docs/contrato-expediente.md) — qué sale, qué no, y por qué
+- [Datos sintéticos](docs/datos-sinteticos.md) — RFC que no pueden ser de nadie, y huecos conocidos
+- [Frontera con CØRD Fiscal](docs/trabajo-preexistente.md) — declaración verificable
 
 ## Trabajo preexistente
 
@@ -104,7 +122,14 @@ la convocatoria; su historial de git lo evidencia.
 
 **CØRD Fiscal** es una plataforma **preexistente** de la que este agente consume
 los libros contables de la PYME **por HTTP**, al mismo nivel que Postgres o
-FastAPI. Nada de su código se copia ni se importa aquí.
+FastAPI. Nada de su código se copia ni se importa aquí — y no hay que creernos:
+
+```bash
+python tools/verificar_frontera.py ../cord_rag_plataform/backend/app
+```
+
+Al 14-ago: 3 coincidencias en 1062 líneas, las tres `from datetime import …`.
+Detalle en [docs/trabajo-preexistente.md](docs/trabajo-preexistente.md).
 
 ## Licencia
 
