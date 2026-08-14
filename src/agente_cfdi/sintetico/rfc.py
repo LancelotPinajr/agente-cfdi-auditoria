@@ -1,37 +1,48 @@
 """RFC sintéticos que no pueden pertenecer a una persona real (tarea 1.15).
 
-Un RFC aleatorio **es el RFC de alguien**. `ABC850612QW3` no es una cadena
+Un RFC aleatorio **es el RFC de alguien**. `MELM850612QW3` no es una cadena
 inventada: es un contribuyente con nombre, domicilio y obligaciones. Publicarlo
 en un video de YouTube junto a montos y plazos de cobro es difundir un dato
 personal patrimonial de un tercero que nunca lo consintió.
 
-La solución está explicada en `docs/datos-sinteticos.md`. En resumen: se fija la
-porción de fecha del RFC en `000000`, que el esquema de CFDI 4.0 acepta y el SAT
-no puede haber asignado nunca.
+La solución y sus alternativas descartadas están en `docs/datos-sinteticos.md`.
+En resumen: se fija la porción de fecha del RFC en `000000`, que el esquema de
+CFDI 4.0 acepta y el SAT no puede haber asignado nunca.
 """
 
 from __future__ import annotations
 
 import random
-import re
 
-# Patrón `tdCFDI:t_RFC` del esquema de CFDI 4.0, tal cual. El lector y las
-# pruebas validan contra este mismo patrón.
-PATRON_RFC = re.compile(r"^[A-ZÑ&]{3,4}[0-9]{2}[0-1][0-9][0-3][0-9][A-Z0-9]{2}[0-9A]$")
+from ..dominio.rfc import (
+    PATRON_RFC,
+    RFC_PUBLICO_EN_GENERAL,
+    RFC_RESIDENTE_EXTRANJERO,
+    es_estructuralmente_valido,
+    porcion_de_fecha,
+)
+
+__all__ = [
+    "FECHA_IMPOSIBLE",
+    "PATRON_RFC",
+    "RFC_PUBLICO_EN_GENERAL",
+    "RFC_RESIDENTE_EXTRANJERO",
+    "RFCInseguro",
+    "es_estructuralmente_valido",
+    "es_sintetico",
+    "rfc_persona_fisica",
+    "rfc_persona_moral",
+]
 
 # La fecha imposible. El SAT construye el RFC con la fecha de constitución de la
 # persona moral o de nacimiento de la persona física; no existe el día cero del
 # mes cero. El esquema, en cambio, solo verifica clases de caracteres —
-# `[0-1][0-9]` acepta `00` y `[0-3][0-9]` también— así que el XML valida.
+# `[0-1][0-9]` acepta `00` y `[0-3][0-9]` también—, así que el XML valida.
 #
 # Es la única propiedad de la que se puede afirmar colisión imposible. Un
-# prefijo de letras "raro" no sirve: cualquier terna de letras puede tocarle a
+# prefijo de letras «raro» no sirve: cualquier terna de letras puede tocarle a
 # una empresa real.
 FECHA_IMPOSIBLE = "000000"
-
-# RFC genéricos reservados por el SAT. Estos sí son públicos y de uso previsto.
-RFC_PUBLICO_EN_GENERAL = "XAXX010101000"
-RFC_RESIDENTE_EXTRANJERO = "XEXX010101000"
 
 _LETRAS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 _HOMOCLAVE = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -75,17 +86,6 @@ def es_sintetico(rfc: str) -> bool:
     """
     if rfc in (RFC_PUBLICO_EN_GENERAL, RFC_RESIDENTE_EXTRANJERO):
         return True
-    if not PATRON_RFC.match(rfc):
+    if not es_estructuralmente_valido(rfc):
         return False
-    return _porcion_de_fecha(rfc) == FECHA_IMPOSIBLE
-
-
-def es_estructuralmente_valido(rfc: str) -> bool:
-    """¿Cumple el patrón `t_RFC` del esquema de CFDI 4.0?"""
-    return bool(PATRON_RFC.match(rfc))
-
-
-def _porcion_de_fecha(rfc: str) -> str:
-    # 3 letras (moral) o 4 (física); la fecha son las 6 posiciones siguientes.
-    inicio = 4 if len(rfc) == 13 else 3
-    return rfc[inicio : inicio + 6]
+    return porcion_de_fecha(rfc) == FECHA_IMPOSIBLE
