@@ -1,2 +1,85 @@
 # agente-cfdi-auditoria
 Agente autónomo de aseguramiento y cesión de CFDI. Auditoría con bitácora encadenada por hash, detección de doble cesión y anclaje diario verificable. Construido con Google ADK y Gemini en Cloud Run.
+
+
+# Agente de Aseguramiento y Cesión de CFDI
+
+Agente autónomo que audita lotes de CFDI, registra cada operación en una
+bitácora encadenada por hash, detecta cesiones duplicadas y ancla un árbol
+de Merkle diario en blockchain para verificación por terceros.
+
+## Stack
+
+| Componente | Tecnología |
+|---|---|
+| Modelo | Gemini 3.5 Flash (`gemini-3.5-flash`, versión `3.5-flash-05-2026`) |
+| Framework de agentes | Google ADK |
+| Infraestructura | Google Cloud Run |
+| Job diario | Cloud Scheduler |
+| Secretos | Secret Manager |
+
+### Nota sobre el modelo
+
+Se usa el id exacto y no un alias `*-latest`, para que la versión sea
+verificable. Descartados: familia 2.5 (por debajo del requisito de 3.5+)
+y variantes EAP/Confidential.
+
+Verificado el 14-ago-2026 vía Gemini API. Migración a Vertex AI: [PENDIENTE]
+
+## Trabajo preexistente
+
+Este agente se construyó íntegramente durante el periodo de submission.
+**CØRD Fiscal** es una plataforma preexistente con la que el agente integra
+por HTTP, al mismo nivel que Postgres o FastAPI. No se copió código de ella.
+
+## Requisitos
+
+- Python 3.11+
+- Cuenta de Google Cloud con facturación activa
+- `gcloud` CLI instalado y autenticado
+
+## Arranque local
+
+En Windows, PowerShell bloquea scripts por defecto:
+
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+Entorno y dependencias:
+
+    python -m venv .venv
+    .\.venv\Scripts\Activate.ps1
+    pip install -r requirements.txt
+
+Variables de entorno:
+
+    $env:GOOGLE_API_KEY = "tu_key"
+
+Prueba de humo:
+
+    python smoke_test.py
+
+Debe imprimir `ok`.
+
+## Variables de entorno
+
+| Variable | Descripción |
+|---|---|
+| `GOOGLE_API_KEY` | Key de Google AI Studio |
+| `GOOGLE_CLOUD_PROJECT` | [PENDIENTE] |
+| `GOOGLE_CLOUD_REGION` | [PENDIENTE] |
+
+## Despliegue
+
+[PENDIENTE — 1.5]
+
+## Endpoints
+
+[PENDIENTE — 2.4, 2.8]
+
+## Contrato en blockchain
+
+[PENDIENTE — 2.7, 3.6]
+
+## Licencia
+
+MIT
