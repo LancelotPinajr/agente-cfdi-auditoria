@@ -6,6 +6,7 @@ y con acentos. Eso son las tres primeras pruebas; el resto cubre las propiedades
 de las que depende que la bitácora sirva de algo.
 """
 
+import hashlib
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -18,6 +19,7 @@ from agente_cfdi.dominio.canonico import (
     Esquema,
     Tipo,
     canonicalizar,
+    describir,
 )
 
 DEMO = Esquema(
@@ -266,3 +268,119 @@ def test_vector_congelado():
         canonicalizar({"total": Decimal("100.5")}, esquema)
         == b"CORD-CANON-14:demo5:total7:d100.504:nota1:n"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Por qué NO separadores — prueba de regresión permanente
+# --------------------------------------------------------------------------- #
+
+
+def _canon_ingenua_con_separadores(registro, campos, separador="|"):
+    """La alternativa que se propuso: unir los campos con un separador."""
+    return separador.join(str(registro[c]) for c in campos).encode("utf-8")
+
+
+CAMPOS_CESION = ("uuid", "concepto", "referencia", "monto")
+
+# Dos cesiones distintas. Lo único que el emisor controla es texto libre:
+# `concepto` y `referencia` los escribe él en su propio CFDI.
+CESION_A = {
+    "uuid": "9F2C1A88-FB09-47F8-B5F9-6DD1C6889D8C",
+    "concepto": "Servicios de manufactura",
+    "referencia": "OC-88|900000.00",
+    "monto": "1.00",
+}
+CESION_B = {
+    "uuid": "9F2C1A88-FB09-47F8-B5F9-6DD1C6889D8C",
+    "concepto": "Servicios de manufactura",
+    "referencia": "OC-88",
+    "monto": "900000.00|1.00",
+}
+
+
+def test_los_separadores_colisionan():
+    """El motivo por el que `CORD-CANON-1` NO usa separadores.
+
+    Dos registros distintos, los mismos bytes, el mismo SHA-256. Quien controla
+    un campo de texto libre fabrica pares así a voluntad. En una bitácora cuyo
+    único propósito es probar que nadie alteró nada, dos registros
+    indistinguibles son el final del argumento.
+
+    Esta prueba afirma la vulnerabilidad de la alternativa, no del sistema. Si
+    algún día falla, es que alguien cambió el ejemplo — no que el problema se
+    haya resuelto.
+    """
+    assert CESION_A != CESION_B
+
+    bytes_a = _canon_ingenua_con_separadores(CESION_A, CAMPOS_CESION)
+    bytes_b = _canon_ingenua_con_separadores(CESION_B, CAMPOS_CESION)
+
+    assert bytes_a == bytes_b, "el ejemplo dejó de colisionar; revisar"
+    assert hashlib.sha256(bytes_a).digest() == hashlib.sha256(bytes_b).digest()
+
+
+def test_el_prefijo_de_longitud_distingue_lo_que_el_separador_confunde():
+    """Y el mismo par bajo `CORD-CANON-1`."""
+    esquema = Esquema("cesion", tuple(Campo(c, Tipo.CADENA) for c in CAMPOS_CESION))
+
+    bytes_a = canonicalizar(CESION_A, esquema)
+    bytes_b = canonicalizar(CESION_B, esquema)
+
+    assert bytes_a != bytes_b
+    assert hashlib.sha256(bytes_a).digest() != hashlib.sha256(bytes_b).digest()
+
+
+def test_ningun_contenido_puede_simular_el_fin_de_su_campo():
+    """La propiedad general, no solo el ejemplo.
+
+    Se prueban cargas pensadas para romper un formato con separadores: el
+    separador mismo, el delimitador de la netstring, y la sintaxis completa de
+    la codificación metida dentro de un valor.
+    """
+    esquema = Esquema(
+        "cesion",
+        (Campo("izquierdo", Tipo.CADENA), Campo("derecho", Tipo.CADENA)),
+    )
+    hostiles = [
+        "|", "||", ":", "5:hola", "3:abc4:defg",
+        "CORD-CANON-1", "CORD-CANON-16:cesion",
+        "9:izquierdo", "\x00", "\n|\n",
+    ]
+    vistos = {}
+    for carga in hostiles:
+        for registro in (
+            {"izquierdo": carga, "derecho": "x"},
+            {"izquierdo": "x", "derecho": carga},
+            {"izquierdo": carga, "derecho": carga},
+        ):
+            bytes_ = canonicalizar(registro, esquema)
+            anterior = vistos.get(bytes_)
+            assert anterior is None or anterior == registro, (
+                f"colisión entre {anterior} y {registro}"
+            )
+            vistos[bytes_] = registro
+
+
+def test_la_vista_legible_no_es_la_que_se_hashea():
+    """`describir` da los separadores para el humano sin tocar los bytes."""
+    esquema = Esquema("cesion", tuple(Campo(c, Tipo.CADENA) for c in CAMPOS_CESION))
+
+    legible_a = describir(CESION_A, esquema)
+    legible_b = describir(CESION_B, esquema)
+
+    assert "|" in legible_a and "uuid=" in legible_a
+    assert "esquema=cesion" in legible_a
+
+    # Es legible, y por eso mismo no sirve para hashear: aquí sí colisionaría
+    # si se usara. Lo que importa es que los bytes canónicos no dependen de ella.
+    assert canonicalizar(CESION_A, esquema) != canonicalizar(CESION_B, esquema)
+    assert legible_a != legible_b
+
+
+def test_describir_marca_los_nulos_sin_confundirlos_con_vacio():
+    esquema = Esquema(
+        "x", (Campo("a", Tipo.CADENA), Campo("b", Tipo.CADENA, opcional=True))
+    )
+    assert "b=∅" in describir({"a": "hola"}, esquema)
+    assert "b=" in describir({"a": "hola", "b": ""}, esquema)
+    assert "∅" not in describir({"a": "hola", "b": ""}, esquema)

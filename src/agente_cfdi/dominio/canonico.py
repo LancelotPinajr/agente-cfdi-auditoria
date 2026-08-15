@@ -273,6 +273,36 @@ def _instante(valor: Any, campo: Campo) -> bytes:
 
 
 # --------------------------------------------------------------------------- #
+# Lectura humana
+# --------------------------------------------------------------------------- #
+
+
+def describir(registro: Mapping[str, Any], esquema: Esquema, *, separador: str = " | ") -> str:
+    """Rinde el registro con separadores, **para que lo lea una persona**.
+
+    Los bytes canónicos son ilegibles a propósito (`10:referencia16:sOC-88…`) y
+    eso estorba al depurar, al revisar un expediente o al enseñar la demo. Esta
+    función da la vista con separadores que se quiere para eso.
+
+    **Su salida nunca se hashea ni se guarda.** Es la misma razón por la que
+    `canonicalizar` no usa separadores: no son inyectivos. Aquí da igual, porque
+    de esta cadena no depende ninguna afirmación de integridad; allá es fatal.
+
+    Separar las dos representaciones —una para la máquina, otra para el humano—
+    da la legibilidad sin tocar la propiedad que sostiene la bitácora.
+    """
+    partes = [f"esquema={esquema.nombre}"]
+    for campo in esquema.campos:
+        valor = registro.get(campo.nombre)
+        if valor is None:
+            partes.append(f"{campo.nombre}=∅")
+        else:
+            rendido = _codificar_valor(valor, campo)[1:].decode("utf-8")
+            partes.append(f"{campo.nombre}={rendido}")
+    return separador.join(partes)
+
+
+# --------------------------------------------------------------------------- #
 # Primitivas
 # --------------------------------------------------------------------------- #
 
@@ -282,6 +312,21 @@ def _netstring(crudo: bytes) -> bytes:
 
     Es lo que hace la concatenación inyectiva sin necesidad de escapar nada:
     ningún contenido de un campo puede simular el final de ese campo.
+
+    **Por qué no separadores.** Con `|` entre campos, estos dos registros
+    distintos producen los mismos bytes y por lo tanto el mismo hash:
+
+        referencia="OC-88|900000.00", monto="1.00"
+        referencia="OC-88",           monto="900000.00|1.00"
+
+    Quien controle un campo de texto libre —`concepto` en un CFDI lo es—
+    fabrica pares así a voluntad. En una bitácora cuyo único propósito es
+    probar que nadie alteró nada, dos registros indistinguibles son el final
+    del argumento. Está fijado en `test_canonico.py::test_los_separadores_colisionan`.
+
+    Escapar los separadores también funcionaría, pero mueve la corrección a un
+    punto donde un error es silencioso: si el escape falla, el hash sigue
+    saliendo y nadie se entera hasta que alguien lo explota.
     """
     return str(len(crudo)).encode("ascii") + b":" + crudo
 
