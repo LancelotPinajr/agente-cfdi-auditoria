@@ -1,12 +1,25 @@
-"""Serialización canónica `CORD-CANON-1`.
+"""Serialización canónica `CORD-CANON-2`.
 
-Lleva un registro lógico a una única cadena de bytes, de forma determinista y
-reversible en principio (la codificación es inyectiva). Es la entrada del hash
-que encadena la bitácora.
+Lleva un registro lógico a una única cadena de bytes, de forma determinista e
+**inyectiva**: dos registros distintos nunca producen los mismos bytes. Es la
+entrada del hash que encadena la bitácora.
 
-El formato y las razones de cada decisión están en `docs/adr/0001-serializacion-canonica.md`.
+El formato usa separadores y es legible:
+
+    CORD-CANON-2|cesion|uuid|s9F2C1A88-…|monto|d142878.90|cedido|b1
+
+La inyectividad **no viene del separador sino del escapado**. Unir campos con
+`|` sin escapar es una vulnerabilidad, no un formato: quien controle un campo de
+texto libre fabrica dos registros distintos con el mismo hash. La demostración
+está en `test_canonico.py::test_los_separadores_sin_escapar_colisionan`.
+
+Aquí no es una afirmación: `descanonicalizar` recupera el registro exacto a
+partir de los bytes. Una codificación que se puede decodificar sin ambigüedad es
+inyectiva por construcción, y eso se prueba por ida y vuelta.
+
+Las razones de cada decisión están en `docs/adr/0001-serializacion-canonica.md`.
 **Esta función se congela al cerrar el Sprint 1**: cambiarla invalida todos los
-hashes ya escritos. Una canon nueva es `CORD-CANON-2`, no una edición de esta.
+hashes ya escritos. Una canon nueva es `CORD-CANON-3`, no una edición de esta.
 """
 
 from __future__ import annotations
@@ -18,7 +31,16 @@ from decimal import Decimal, DecimalException
 from enum import Enum
 from typing import Any, Mapping
 
-VERSION = b"CORD-CANON-1"
+VERSION = "CORD-CANON-2"
+
+SEPARADOR = "|"
+ESCAPE = "\\"
+
+# Un registro canónico es siempre **una línea**: los saltos se escapan. Así se
+# puede volcar la bitácora a un archivo de texto, verla en un log o pegarla en
+# un expediente sin que el formato dependa de dónde se mire.
+_ESCAPES = {ESCAPE: ESCAPE + ESCAPE, SEPARADOR: ESCAPE + SEPARADOR, "\n": ESCAPE + "n", "\r": ESCAPE + "r"}
+_DESESCAPES = {ESCAPE: ESCAPE, SEPARADOR: SEPARADOR, "n": "\n", "r": "\r"}
 
 # Precisión máxima admitida en una escala declarada. Un tope explícito evita que
 # un esquema mal escrito pida una escala absurda y produzca cadenas gigantes.
@@ -36,9 +58,9 @@ class ErrorDeCanonicalizacion(ValueError):
 class Tipo(Enum):
     """Tipos declarables en un esquema.
 
-    El valor es la etiqueta de un solo byte que precede a la carga en la
-    codificación. `NULO` no se declara: se emite cuando un campo opcional viene
-    ausente o en `None`.
+    El valor es la etiqueta de un solo carácter que precede a la carga. Sin ella
+    un `NULO` y una cadena vacía darían los mismos bytes, que son dos hechos
+    distintos: «no se declaró» y «se declaró vacío».
     """
 
     CADENA = "s"
@@ -116,6 +138,9 @@ class Esquema:
     def canonicalizar(self, registro: Mapping[str, Any]) -> bytes:
         return canonicalizar(registro, self)
 
+    def descanonicalizar(self, crudo: bytes) -> dict[str, Any]:
+        return descanonicalizar(crudo, self)
+
 
 def canonicalizar(registro: Mapping[str, Any], esquema: Esquema) -> bytes:
     """Devuelve la representación canónica del registro bajo el esquema dado.
@@ -136,7 +161,7 @@ def canonicalizar(registro: Mapping[str, Any], esquema: Esquema) -> bytes:
             f"{sorted(sobrantes)}; el esquema es estricto por diseño"
         )
 
-    partes = [VERSION, _netstring(_utf8(esquema.nombre))]
+    piezas = [VERSION, esquema.nombre]
     for campo in esquema.campos:
         if campo.nombre not in registro:
             if not campo.opcional:
@@ -147,10 +172,121 @@ def canonicalizar(registro: Mapping[str, Any], esquema: Esquema) -> bytes:
         else:
             valor = registro[campo.nombre]
 
-        partes.append(_netstring(_utf8(campo.nombre)))
-        partes.append(_netstring(_codificar_valor(valor, campo)))
+        piezas.append(campo.nombre)
+        piezas.append(_codificar_valor(valor, campo))
 
-    return b"".join(partes)
+    return SEPARADOR.join(_escapar(pieza) for pieza in piezas).encode("utf-8")
+
+
+def descanonicalizar(crudo: bytes, esquema: Esquema) -> dict[str, Any]:
+    """Recupera el registro a partir de sus bytes canónicos.
+
+    **Existe para probar que la codificación es inyectiva.** Si de los bytes se
+    puede recuperar el registro exacto, entonces dos registros distintos no
+    pueden haber producido los mismos bytes — que es precisamente la propiedad
+    de la que depende toda la bitácora.
+
+    No es una función de conveniencia: es la mitad de la demostración. La otra
+    mitad son las pruebas de ida y vuelta en `test_canonico.py`.
+    """
+    if not isinstance(crudo, (bytes, bytearray)):
+        raise ErrorDeCanonicalizacion(
+            f"se esperaban bytes, llegó {type(crudo).__name__}"
+        )
+    try:
+        texto = bytes(crudo).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ErrorDeCanonicalizacion(f"los bytes no son UTF-8 válido: {exc}") from exc
+
+    piezas = [_desescapar(p) for p in _partir(texto)]
+    esperadas = 2 + 2 * len(esquema.campos)
+    if len(piezas) != esperadas:
+        raise ErrorDeCanonicalizacion(
+            f"esquema '{esquema.nombre}': se esperaban {esperadas} piezas, "
+            f"llegaron {len(piezas)}"
+        )
+    if piezas[0] != VERSION:
+        raise ErrorDeCanonicalizacion(
+            f"versión de canon {piezas[0]!r}; esta implementación es {VERSION}"
+        )
+    if piezas[1] != esquema.nombre:
+        raise ErrorDeCanonicalizacion(
+            f"los bytes son del esquema {piezas[1]!r}, no de '{esquema.nombre}'"
+        )
+
+    registro: dict[str, Any] = {}
+    for indice, campo in enumerate(esquema.campos):
+        nombre = piezas[2 + 2 * indice]
+        carga = piezas[3 + 2 * indice]
+        if nombre != campo.nombre:
+            raise ErrorDeCanonicalizacion(
+                f"se esperaba el campo '{campo.nombre}' y llegó {nombre!r}"
+            )
+        registro[campo.nombre] = _decodificar_valor(carga, campo)
+    return registro
+
+
+# --------------------------------------------------------------------------- #
+# Escapado — de aquí sale la inyectividad
+# --------------------------------------------------------------------------- #
+
+
+def _escapar(pieza: str) -> str:
+    """Vuelve el separador inofensivo dentro de un valor.
+
+    El orden importa: la barra invertida se escapa **primero**, o el escape de
+    `|` se volvería a escapar y la vuelta no sería exacta.
+    """
+    salida = []
+    for caracter in pieza:
+        salida.append(_ESCAPES.get(caracter, caracter))
+    return "".join(salida)
+
+
+def _desescapar(pieza: str) -> str:
+    salida = []
+    caracteres = iter(pieza)
+    for caracter in caracteres:
+        if caracter != ESCAPE:
+            salida.append(caracter)
+            continue
+        try:
+            siguiente = next(caracteres)
+        except StopIteration:
+            raise ErrorDeCanonicalizacion(
+                "escape colgante al final de una pieza"
+            ) from None
+        if siguiente not in _DESESCAPES:
+            raise ErrorDeCanonicalizacion(f"escape desconocido: '\\{siguiente}'")
+        salida.append(_DESESCAPES[siguiente])
+    return "".join(salida)
+
+
+def _partir(texto: str) -> list[str]:
+    """Parte por separadores **no escapados**.
+
+    Un `str.split('|')` a secas partiría también los `\\|` que están dentro de un
+    valor, y ahí se pierde la propiedad.
+    """
+    piezas: list[str] = []
+    actual: list[str] = []
+    escapando = False
+    for caracter in texto:
+        if escapando:
+            actual.append(caracter)
+            escapando = False
+        elif caracter == ESCAPE:
+            actual.append(caracter)
+            escapando = True
+        elif caracter == SEPARADOR:
+            piezas.append("".join(actual))
+            actual = []
+        else:
+            actual.append(caracter)
+    if escapando:
+        raise ErrorDeCanonicalizacion("escape colgante al final del registro")
+    piezas.append("".join(actual))
+    return piezas
 
 
 # --------------------------------------------------------------------------- #
@@ -158,13 +294,13 @@ def canonicalizar(registro: Mapping[str, Any], esquema: Esquema) -> bytes:
 # --------------------------------------------------------------------------- #
 
 
-def _codificar_valor(valor: Any, campo: Campo) -> bytes:
+def _codificar_valor(valor: Any, campo: Campo) -> str:
     if valor is None:
         if not campo.opcional:
             raise ErrorDeCanonicalizacion(
                 f"campo '{campo.nombre}' es obligatorio y llegó nulo"
             )
-        return Tipo.NULO.value.encode("ascii")
+        return Tipo.NULO.value
 
     codificadores = {
         Tipo.CADENA: _cadena,
@@ -173,21 +309,55 @@ def _codificar_valor(valor: Any, campo: Campo) -> bytes:
         Tipo.BOOLEANO: _booleano,
         Tipo.INSTANTE: _instante,
     }
-    carga = codificadores[campo.tipo](valor, campo)
-    return campo.tipo.value.encode("ascii") + carga
+    return campo.tipo.value + codificadores[campo.tipo](valor, campo)
 
 
-def _cadena(valor: Any, campo: Campo) -> bytes:
+def _decodificar_valor(carga: str, campo: Campo) -> Any:
+    if not carga:
+        raise ErrorDeCanonicalizacion(f"campo '{campo.nombre}': carga vacía sin etiqueta")
+    etiqueta, resto = carga[0], carga[1:]
+
+    if etiqueta == Tipo.NULO.value:
+        if not campo.opcional:
+            raise ErrorDeCanonicalizacion(
+                f"campo '{campo.nombre}': nulo en un campo obligatorio"
+            )
+        if resto:
+            raise ErrorDeCanonicalizacion(
+                f"campo '{campo.nombre}': un nulo no lleva carga"
+            )
+        return None
+
+    if etiqueta != campo.tipo.value:
+        raise ErrorDeCanonicalizacion(
+            f"campo '{campo.nombre}': etiqueta '{etiqueta}' no corresponde a "
+            f"'{campo.tipo.value}' ({campo.tipo.name})"
+        )
+
+    if campo.tipo is Tipo.CADENA:
+        return resto
+    if campo.tipo is Tipo.DECIMAL:
+        return Decimal(resto)
+    if campo.tipo is Tipo.ENTERO:
+        return int(resto)
+    if campo.tipo is Tipo.BOOLEANO:
+        if resto not in ("0", "1"):
+            raise ErrorDeCanonicalizacion(f"campo '{campo.nombre}': booleano {resto!r}")
+        return resto == "1"
+    return datetime.strptime(resto, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def _cadena(valor: Any, campo: Campo) -> str:
     if not isinstance(valor, str):
         raise ErrorDeCanonicalizacion(
             f"campo '{campo.nombre}': se esperaba cadena, llegó {type(valor).__name__}"
         )
     # NFC: 'ñ' precompuesta y 'n' + tilde combinante son la misma cadena para un
     # humano y bytes distintos para SHA-256.
-    return _utf8(unicodedata.normalize("NFC", valor))
+    return unicodedata.normalize("NFC", valor)
 
 
-def _decimal(valor: Any, campo: Campo) -> bytes:
+def _decimal(valor: Any, campo: Campo) -> str:
     assert campo.escala is not None  # garantizado por Campo.__post_init__
 
     if isinstance(valor, bool):
@@ -229,10 +399,10 @@ def _decimal(valor: Any, campo: Campo) -> bytes:
     if cuantizado.is_zero():
         cuantizado = abs(cuantizado)  # '-0.00' y '0.00' son el mismo importe
 
-    return _utf8(format(cuantizado, "f"))
+    return format(cuantizado, "f")
 
 
-def _entero(valor: Any, campo: Campo) -> bytes:
+def _entero(valor: Any, campo: Campo) -> str:
     if isinstance(valor, bool):
         raise ErrorDeCanonicalizacion(
             f"campo '{campo.nombre}': un booleano no es un entero"
@@ -241,18 +411,18 @@ def _entero(valor: Any, campo: Campo) -> bytes:
         raise ErrorDeCanonicalizacion(
             f"campo '{campo.nombre}': se esperaba entero, llegó {type(valor).__name__}"
         )
-    return _utf8(str(valor))
+    return str(valor)
 
 
-def _booleano(valor: Any, campo: Campo) -> bytes:
+def _booleano(valor: Any, campo: Campo) -> str:
     if not isinstance(valor, bool):
         raise ErrorDeCanonicalizacion(
             f"campo '{campo.nombre}': se esperaba booleano, llegó {type(valor).__name__}"
         )
-    return b"1" if valor else b"0"
+    return "1" if valor else "0"
 
 
-def _instante(valor: Any, campo: Campo) -> bytes:
+def _instante(valor: Any, campo: Campo) -> str:
     if not isinstance(valor, datetime):
         raise ErrorDeCanonicalizacion(
             f"campo '{campo.nombre}': se esperaba datetime, llegó {type(valor).__name__}"
@@ -269,67 +439,4 @@ def _instante(valor: Any, campo: Campo) -> bytes:
             f"campo '{campo.nombre}': la canon tiene precisión de segundo y el "
             f"valor trae fracción; no se trunca en silencio"
         )
-    return _utf8(valor.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-
-
-# --------------------------------------------------------------------------- #
-# Lectura humana
-# --------------------------------------------------------------------------- #
-
-
-def describir(registro: Mapping[str, Any], esquema: Esquema, *, separador: str = " | ") -> str:
-    """Rinde el registro con separadores, **para que lo lea una persona**.
-
-    Los bytes canónicos son ilegibles a propósito (`10:referencia16:sOC-88…`) y
-    eso estorba al depurar, al revisar un expediente o al enseñar la demo. Esta
-    función da la vista con separadores que se quiere para eso.
-
-    **Su salida nunca se hashea ni se guarda.** Es la misma razón por la que
-    `canonicalizar` no usa separadores: no son inyectivos. Aquí da igual, porque
-    de esta cadena no depende ninguna afirmación de integridad; allá es fatal.
-
-    Separar las dos representaciones —una para la máquina, otra para el humano—
-    da la legibilidad sin tocar la propiedad que sostiene la bitácora.
-    """
-    partes = [f"esquema={esquema.nombre}"]
-    for campo in esquema.campos:
-        valor = registro.get(campo.nombre)
-        if valor is None:
-            partes.append(f"{campo.nombre}=∅")
-        else:
-            rendido = _codificar_valor(valor, campo)[1:].decode("utf-8")
-            partes.append(f"{campo.nombre}={rendido}")
-    return separador.join(partes)
-
-
-# --------------------------------------------------------------------------- #
-# Primitivas
-# --------------------------------------------------------------------------- #
-
-
-def _netstring(crudo: bytes) -> bytes:
-    """`len:bytes` — codificación con prefijo de longitud.
-
-    Es lo que hace la concatenación inyectiva sin necesidad de escapar nada:
-    ningún contenido de un campo puede simular el final de ese campo.
-
-    **Por qué no separadores.** Con `|` entre campos, estos dos registros
-    distintos producen los mismos bytes y por lo tanto el mismo hash:
-
-        referencia="OC-88|900000.00", monto="1.00"
-        referencia="OC-88",           monto="900000.00|1.00"
-
-    Quien controle un campo de texto libre —`concepto` en un CFDI lo es—
-    fabrica pares así a voluntad. En una bitácora cuyo único propósito es
-    probar que nadie alteró nada, dos registros indistinguibles son el final
-    del argumento. Está fijado en `test_canonico.py::test_los_separadores_colisionan`.
-
-    Escapar los separadores también funcionaría, pero mueve la corrección a un
-    punto donde un error es silencioso: si el escape falla, el hash sigue
-    saliendo y nadie se entera hasta que alguien lo explota.
-    """
-    return str(len(crudo)).encode("ascii") + b":" + crudo
-
-
-def _utf8(texto: str) -> bytes:
-    return texto.encode("utf-8")
+    return valor.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

@@ -67,7 +67,7 @@ nuestro y la zona es conocida.
 
 ### 5. Se rechaza lo que no se puede representar sin perder información
 
-Coherente con `CORD-CANON-1` (ver [ADR 0001](0001-serializacion-canonica.md)):
+Coherente con `CORD-CANON-2` (ver [ADR 0001](0001-serializacion-canonica.md)):
 
 - Un `Total` con más decimales de los que la moneda admite es un error, no algo
   que se trunque. Truncar mete a la bitácora un importe distinto del declarado.

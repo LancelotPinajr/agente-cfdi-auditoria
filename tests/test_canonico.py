@@ -1,4 +1,4 @@
-"""Pruebas de `CORD-CANON-1` (tarea 1.10).
+"""Pruebas de `CORD-CANON-2` (tarea 1.10).
 
 El criterio de aceptación del plan es «mismo registro → misma cadena de bytes,
 sin importar orden de campos ni cómo venga el decimal», con `100.5` vs `100.50`
@@ -19,7 +19,7 @@ from agente_cfdi.dominio.canonico import (
     Esquema,
     Tipo,
     canonicalizar,
-    describir,
+    descanonicalizar,
 )
 
 DEMO = Esquema(
@@ -92,7 +92,7 @@ def test_los_acentos_se_normalizan_a_nfc():
 
 
 def test_el_contenido_de_un_campo_no_puede_simular_otro_campo():
-    """Sin prefijo de longitud, estos dos registros colisionarían."""
+    """Sin escapar el separador, estos dos registros colisionarían."""
     a = registro(uuid="AAA", emisor="BBB")
     b = registro(uuid="AAABBB", emisor="")
     assert canonicalizar(a, DEMO) != canonicalizar(b, DEMO)
@@ -133,7 +133,7 @@ def test_dos_esquemas_con_los_mismos_campos_no_colisionan():
 
 
 def test_el_prefijo_de_version_esta_en_los_bytes():
-    assert canonicalizar(registro(), DEMO).startswith(b"CORD-CANON-1")
+    assert canonicalizar(registro(), DEMO).startswith(b"CORD-CANON-2")
 
 
 # --------------------------------------------------------------------------- #
@@ -255,7 +255,7 @@ def test_vector_congelado():
     """Centinela de congelación.
 
     Cualquier edición a la canon rompe esta prueba. Si falla, la pregunta no es
-    «cómo actualizo el vector» sino «por qué estoy cambiando CORD-CANON-1».
+    «cómo actualizo el vector» sino «por qué estoy cambiando CORD-CANON-2».
     """
     esquema = Esquema(
         "demo",
@@ -266,7 +266,7 @@ def test_vector_congelado():
     )
     assert (
         canonicalizar({"total": Decimal("100.5")}, esquema)
-        == b"CORD-CANON-14:demo5:total7:d100.504:nota1:n"
+        == b"CORD-CANON-2|demo|total|d100.50|nota|n"
     )
 
 
@@ -298,8 +298,8 @@ CESION_B = {
 }
 
 
-def test_los_separadores_colisionan():
-    """El motivo por el que `CORD-CANON-1` NO usa separadores.
+def test_los_separadores_sin_escapar_colisionan():
+    """El motivo por el que `CORD-CANON-2` escapa antes de unir.
 
     Dos registros distintos, los mismos bytes, el mismo SHA-256. Quien controla
     un campo de texto libre fabrica pares así a voluntad. En una bitácora cuyo
@@ -319,8 +319,8 @@ def test_los_separadores_colisionan():
     assert hashlib.sha256(bytes_a).digest() == hashlib.sha256(bytes_b).digest()
 
 
-def test_el_prefijo_de_longitud_distingue_lo_que_el_separador_confunde():
-    """Y el mismo par bajo `CORD-CANON-1`."""
+def test_el_escapado_distingue_lo_que_el_separador_desnudo_confunde():
+    """Y el mismo par bajo `CORD-CANON-2`."""
     esquema = Esquema("cesion", tuple(Campo(c, Tipo.CADENA) for c in CAMPOS_CESION))
 
     bytes_a = canonicalizar(CESION_A, esquema)
@@ -343,7 +343,7 @@ def test_ningun_contenido_puede_simular_el_fin_de_su_campo():
     )
     hostiles = [
         "|", "||", ":", "5:hola", "3:abc4:defg",
-        "CORD-CANON-1", "CORD-CANON-16:cesion",
+        "CORD-CANON-2", "CORD-CANON-2|cesion",
         "9:izquierdo", "\x00", "\n|\n",
     ]
     vistos = {}
@@ -361,26 +361,140 @@ def test_ningun_contenido_puede_simular_el_fin_de_su_campo():
             vistos[bytes_] = registro
 
 
-def test_la_vista_legible_no_es_la_que_se_hashea():
-    """`describir` da los separadores para el humano sin tocar los bytes."""
+# --------------------------------------------------------------------------- #
+# Ida y vuelta: la inyectividad demostrada, no afirmada
+# --------------------------------------------------------------------------- #
+
+# Cargas pensadas para romper un formato con separadores: el separador desnudo,
+# el carácter de escape, escapes ya formados, la sintaxis completa de la canon
+# metida dentro de un valor, y saltos de línea.
+HOSTILES = [
+    "",
+    "|",
+    "||",
+    "\\",
+    "\\\\",
+    "\\|",
+    "|\\",
+    "a|b",
+    "a\\|b",
+    "\\n",
+    "\n",
+    "\r\n",
+    "CORD-CANON-2",
+    "CORD-CANON-2|cesion|uuid|sX",
+    "uuid",
+    "s",
+    "n",
+    "d100.50",
+    "|".join(["x"] * 20),
+    "\\" * 7,
+    "ñ|Ñ|\u0301",
+    "\x00|\x1e",
+]
+
+
+def test_ida_y_vuelta_recupera_el_registro_exacto():
+    """Si de los bytes se recupera el registro, dos registros distintos no
+    pudieron haber producido los mismos bytes. Eso *es* la inyectividad."""
     esquema = Esquema("cesion", tuple(Campo(c, Tipo.CADENA) for c in CAMPOS_CESION))
-
-    legible_a = describir(CESION_A, esquema)
-    legible_b = describir(CESION_B, esquema)
-
-    assert "|" in legible_a and "uuid=" in legible_a
-    assert "esquema=cesion" in legible_a
-
-    # Es legible, y por eso mismo no sirve para hashear: aquí sí colisionaría
-    # si se usara. Lo que importa es que los bytes canónicos no dependen de ella.
-    assert canonicalizar(CESION_A, esquema) != canonicalizar(CESION_B, esquema)
-    assert legible_a != legible_b
+    for carga in HOSTILES:
+        for posicion in CAMPOS_CESION:
+            original = {c: ("relleno" if c != posicion else carga) for c in CAMPOS_CESION}
+            crudo = canonicalizar(original, esquema)
+            assert descanonicalizar(crudo, esquema) == original, (
+                f"no se recuperó {carga!r} en {posicion}"
+            )
 
 
-def test_describir_marca_los_nulos_sin_confundirlos_con_vacio():
+def test_ida_y_vuelta_con_todos_los_tipos():
     esquema = Esquema(
-        "x", (Campo("a", Tipo.CADENA), Campo("b", Tipo.CADENA, opcional=True))
+        "registro",
+        (
+            Campo("uuid", Tipo.CADENA),
+            Campo("monto", Tipo.DECIMAL, escala=2),
+            Campo("posicion", Tipo.ENTERO),
+            Campo("cedido", Tipo.BOOLEANO),
+            Campo("escrito_en", Tipo.INSTANTE),
+            Campo("nota", Tipo.CADENA, opcional=True),
+        ),
     )
-    assert "b=∅" in describir({"a": "hola"}, esquema)
-    assert "b=" in describir({"a": "hola", "b": ""}, esquema)
-    assert "∅" not in describir({"a": "hola", "b": ""}, esquema)
+    original = {
+        "uuid": "9F2C1A88-FB09-47F8-B5F9-6DD1C6889D8C",
+        "monto": Decimal("142878.90"),
+        "posicion": 41,
+        "cedido": True,
+        "escrito_en": datetime(2026, 8, 14, 15, 30, tzinfo=timezone.utc),
+        "nota": None,
+    }
+    crudo = canonicalizar(original, esquema)
+    assert descanonicalizar(crudo, esquema) == original
+    assert canonicalizar(descanonicalizar(crudo, esquema), esquema) == crudo
+
+
+def test_dos_registros_distintos_nunca_dan_los_mismos_bytes():
+    """Barrido sobre pares hostiles: ninguna colisión, en ninguna posición."""
+    esquema = Esquema("cesion", tuple(Campo(c, Tipo.CADENA) for c in CAMPOS_CESION))
+    vistos: dict[bytes, dict] = {}
+    for carga in HOSTILES:
+        for posicion in CAMPOS_CESION:
+            for relleno in ("", "x", "|"):
+                original = {
+                    c: (relleno if c != posicion else carga) for c in CAMPOS_CESION
+                }
+                crudo = canonicalizar(original, esquema)
+                anterior = vistos.get(crudo)
+                assert anterior is None or anterior == original, (
+                    f"COLISIÓN entre {anterior} y {original}"
+                )
+                vistos[crudo] = original
+
+
+def test_el_registro_canonico_es_siempre_una_sola_linea():
+    """Un salto de línea dentro de un valor no puede partir el registro."""
+    esquema = Esquema("x", (Campo("v", Tipo.CADENA),))
+    crudo = canonicalizar({"v": "primera\nsegunda\r\ntercera"}, esquema)
+    assert b"\n" not in crudo and b"\r" not in crudo
+    assert descanonicalizar(crudo, esquema)["v"] == "primera\nsegunda\r\ntercera"
+
+
+def test_el_registro_canonico_se_lee_a_simple_vista():
+    """La razón por la que se eligieron separadores sobre prefijos de longitud."""
+    esquema = Esquema(
+        "cesion",
+        (Campo("uuid", Tipo.CADENA), Campo("monto", Tipo.DECIMAL, escala=2)),
+    )
+    rendido = canonicalizar(
+        {"uuid": "9F2C1A88-FB09-47F8-B5F9-6DD1C6889D8C", "monto": Decimal("142878.90")},
+        esquema,
+    ).decode("utf-8")
+    assert rendido == (
+        "CORD-CANON-2|cesion|uuid|s9F2C1A88-FB09-47F8-B5F9-6DD1C6889D8C|monto|d142878.90"
+    )
+
+
+@pytest.mark.parametrize(
+    "corrupto",
+    [
+        b"CORD-CANON-1|demo|v|sx",          # otra versión de canon
+        b"CORD-CANON-2|otro|v|sx",          # otro esquema
+        b"CORD-CANON-2|demo|v|sx|sobra|sy",  # piezas de más
+        b"CORD-CANON-2|demo|v",              # piezas de menos
+        b"CORD-CANON-2|demo|w|sx",           # otro nombre de campo
+        b"CORD-CANON-2|demo|v|ix",           # etiqueta de tipo equivocada
+        b"CORD-CANON-2|demo|v|sx\\",         # escape colgante
+        b"CORD-CANON-2|demo|v|sx\\q",        # escape desconocido
+        b"CORD-CANON-2|demo|v|",             # carga sin etiqueta
+        b"\xff\xfe",                          # ni siquiera UTF-8
+    ],
+)
+def test_bytes_corruptos_se_rechazan_en_vez_de_devolver_basura(corrupto):
+    esquema = Esquema("demo", (Campo("v", Tipo.CADENA),))
+    with pytest.raises(ErrorDeCanonicalizacion):
+        descanonicalizar(corrupto, esquema)
+
+
+def test_un_nulo_no_se_puede_colar_en_un_campo_obligatorio():
+    esquema = Esquema("demo", (Campo("v", Tipo.CADENA),))
+    with pytest.raises(ErrorDeCanonicalizacion, match="obligatorio"):
+        descanonicalizar(b"CORD-CANON-2|demo|v|n", esquema)

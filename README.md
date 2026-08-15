@@ -49,7 +49,7 @@ pide paso a paso.
 
 | Pieza | Estado |
 |---|---|
-| Serialización canónica `CORD-CANON-1` | ✅ implementada y congelada |
+| Serialización canónica `CORD-CANON-2` | ✅ implementada y congelada |
 | Generador de CFDI sintéticos | ✅ |
 | Lector de CFDI 4.0 | ✅ |
 | Fuente de libros (sintética + CØRD Fiscal) | ✅ |
@@ -58,7 +58,7 @@ pide paso a paso.
 | Merkle + anclaje | ⬜ Sprint 2 |
 | Agente ADK + Gemini en Cloud Run | ⬜ carril de infraestructura |
 
-169 pruebas, sin dependencias de terceros salvo `httpx` para el cliente HTTP.
+188 pruebas, sin dependencias de terceros salvo `httpx` para el cliente HTTP.
 
 ---
 
@@ -109,7 +109,7 @@ export CORD_FISCAL_TOKEN=...   # de Secret Manager, nunca del repo
 
 ## Documentación
 
-- [ADR 0001 — Serialización canónica `CORD-CANON-1`](docs/adr/0001-serializacion-canonica.md)
+- [ADR 0001 — Serialización canónica `CORD-CANON-2`](docs/adr/0001-serializacion-canonica.md)
 - [ADR 0003 — Lectura de CFDI](docs/adr/0003-lectura-de-cfdi.md)
 - [Contrato de datos del expediente](docs/contrato-expediente.md) — qué sale, qué no, y por qué
 - [Datos sintéticos](docs/datos-sinteticos.md) — RFC que no pueden ser de nadie, y huecos conocidos

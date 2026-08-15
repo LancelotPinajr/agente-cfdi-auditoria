@@ -1,7 +1,16 @@
-# ADR 0001 — Serialización canónica `CORD-CANON-1`
+# ADR 0001 — Serialización canónica `CORD-CANON-2`
 
 **Estado:** aceptado · **Fecha:** 14 de agosto de 2026
 **Tarea del plan:** 1.10 · **Congelación:** cierre del Sprint 1 (17-ago)
+
+> **Revisión del 14-ago.** La primera versión de este ADR adoptó `CORD-CANON-2`,
+> con prefijo de longitud. Se revisó a petición del equipo por legibilidad y se
+> adoptó `CORD-CANON-2`: **separadores con escapado**, que da la misma
+> inyectividad en una forma que se lee a simple vista. El cambio se hizo antes de
+> escribir ningún registro, así que no invalidó nada. La sección
+> «[Separadores, sí — pero escapados](#separadores-sí--pero-escapados)» conserva
+> el análisis completo, incluida la razón por la que unir con separadores **sin**
+> escapar sería una vulnerabilidad.
 
 ---
 
@@ -24,26 +33,32 @@ de ahí el número de versión en el prefijo.
 
 ## Decisión
 
-Se adopta `CORD-CANON-1`: codificación **binaria, con prefijo de longitud y
+Se adopta `CORD-CANON-2`: codificación **de texto, con separadores escapados y
 etiqueta de tipo**, contra un esquema declarado.
 
 ### Formato
 
 ```
-CORD-CANON-1 ‖ netstring(nombre_del_esquema) ‖ campo₁ ‖ campo₂ ‖ … ‖ campoₙ
+CORD-CANON-2 | esquema | campo₁ | valor₁ | campo₂ | valor₂ | … | campoₙ | valorₙ
 ```
 
-donde, para cada campo del esquema **en el orden declarado**:
+donde cada pieza se **escapa antes de unir** y cada valor lleva su etiqueta de
+tipo por delante:
 
 ```
-campoᵢ = netstring(nombre_utf8) ‖ netstring(etiqueta_de_tipo ‖ valor_utf8)
-netstring(b) = decimal(len(b)) ‖ ":" ‖ b
+valorᵢ  = etiqueta_de_tipo ‖ representación_del_valor
+escapar = "\" → "\\"   "|" → "\|"   LF → "\n"   CR → "\r"
 ```
 
-Ejemplo (esquema `demo`, un campo `total` con valor decimal `100.5` y escala 2):
+Todo se codifica en UTF-8 al final. Un registro canónico es **siempre una sola
+línea**: se puede volcar a un archivo, verlo en un log o pegarlo en un expediente
+sin que el formato dependa de dónde se mire.
+
+Ejemplo (esquema `demo`, campo `total` decimal `100.5` con escala 2, y un `nota`
+opcional ausente):
 
 ```
-CORD-CANON-15:demo5:total7:d100.50
+CORD-CANON-2|demo|total|d100.50|nota|n
 ```
 
 ### Etiquetas de tipo
@@ -61,19 +76,54 @@ CORD-CANON-15:demo5:total7:d100.50
 
 ## Por qué así, y no de la otra forma
 
-### Prefijo de longitud en vez de separador
+### Separadores, sí — pero escapados
 
-Lo natural es unir los campos con `|` o `\x1e`. Es una vulnerabilidad.
+Lo natural es unir los campos con `|`. Hacerlo **sin escapar** es una
+vulnerabilidad, y conviene entender exactamente cuál para no reintroducirla.
 
-Con separador, el registro `{"rfc": "AAA010101AAA|999999.00", "total": "1.00"}`
-y el registro `{"rfc": "AAA010101AAA", "total": "999999.00|1.00"}` **producen la
-misma cadena** y por lo tanto el mismo hash. Quien controle el contenido de un
-campo de texto puede fabricar dos registros distintos con la misma huella. En una
-bitácora cuyo único propósito es demostrar que nadie alteró nada, eso es fatal.
+Con separador desnudo, estas dos cesiones producen la misma cadena y por lo tanto
+el mismo hash:
 
-Escapar el separador lo arregla, pero convierte la función en algo con casos
-borde. El prefijo de longitud lo hace imposible por construcción: la codificación
-es inyectiva sin excepciones y no hay nada que escapar.
+```
+referencia = "OC-88|900000.00"   monto = "1.00"
+referencia = "OC-88"             monto = "900000.00|1.00"
+```
+
+Ambas dan `…|OC-88|900000.00|1.00`. Quien controle un campo de texto libre
+—`concepto` y `referencia` los escribe el propio emisor en su CFDI— fabrica
+pares así a voluntad. En una bitácora cuyo único propósito es demostrar que nadie
+alteró nada, dos registros indistinguibles acaban con el argumento.
+
+**El escapado cierra el hueco por completo.** Escapar `\` y `|` dentro de cada
+pieza antes de unir hace que ningún contenido pueda simular el fin de su campo:
+la transformación es una biyección entre cadenas arbitrarias y cadenas sin
+separador libre. Las dos cesiones de arriba pasan a ser:
+
+```
+…|sOC-88\|900000.00|monto|s1.00
+…|sOC-88|monto|s900000.00\|1.00
+```
+
+Se consideró el prefijo de longitud (`5:total`), que también es inyectivo y no
+requiere escapar nada. **Se prefirió el escapado por legibilidad**: un registro
+canónico se lee de un vistazo en un log, en una revisión o en la demo, y esa
+propiedad se usa muchas veces al día durante el desarrollo. La objeción legítima
+al escapado es que un error en él sería silencioso —el hash sale igual y nadie se
+entera hasta que alguien lo explota—, y por eso:
+
+### `descanonicalizar` existe para probar la inyectividad, no por conveniencia
+
+La codificación viene con su **decodificador**. Si de los bytes se recupera el
+registro exacto, entonces dos registros distintos no pudieron haber producido los
+mismos bytes: eso *es* la inyectividad, demostrada por construcción en vez de
+afirmada.
+
+Las pruebas hacen la ida y vuelta sobre un catálogo de cargas hostiles —el
+separador desnudo, la barra invertida, escapes ya formados, la sintaxis completa
+de la canon metida dentro de un valor, saltos de línea— en cada posición del
+registro, y verifican que ningún par distinto colisiona. El riesgo de «error
+silencioso en el escapado» queda cubierto por una prueba, que es la única forma
+de cubrirlo.
 
 ### Etiqueta de tipo
 
@@ -93,7 +143,7 @@ alguien cobra. La función se niega y el problema se resuelve donde nació — e
 lector o en la fuente de datos —, no debajo de la alfombra criptográfica.
 
 Por la misma razón se **rechaza `float`**. `0.1 + 0.2` no es `0.3` y ningún
-prefijo de longitud arregla eso. Los montos entran como `Decimal`, `int` o `str`.
+escapado no cambia eso. Los montos entran como `Decimal`, `int` o `str`.
 
 ### Instantes: se rechaza lo ambiguo
 
@@ -118,7 +168,7 @@ del hash — exactamente el hueco por el que alguien mete algo que después nieg
 
 ### El prefijo de versión
 
-`CORD-CANON-1` va en los bytes que se hashean. Si algún día hace falta una
+`CORD-CANON-2` va en los bytes que se hashean. Si algún día hace falta una
 canon 2, los registros viejos siguen verificando con su propia regla y no hay
 forma de confundir uno con otro. Cambiar la canon **no** es editar esta función:
 es escribir `CORD-CANON-2` y dejar la 1 intacta para siempre.
