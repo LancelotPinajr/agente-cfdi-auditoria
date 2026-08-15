@@ -80,12 +80,13 @@ es auditable sin confiar en el modelo.
 | Lector de CFDI 4.0 | ✅ |
 | Fuente de libros (sintética + CØRD Fiscal) | ✅ |
 | Verificación del modelo | ✅ vía Gemini API; Vertex pendiente |
-| Bitácora encadenada | ⬜ Sprint 2 |
-| Registro de cesiones | ⬜ Sprint 2 |
-| Merkle + anclaje | ⬜ Sprint 2 |
+| Bitácora encadenada | ✅ |
+| Registro de cesiones | ✅ |
+| Raíz de Merkle | ✅ |
+| Anclaje en cadena | ⬜ Sprint 2 |
 | Agente ADK en Cloud Run | ⬜ carril de infraestructura |
 
-188 pruebas, sin dependencias de terceros salvo `httpx` para el cliente HTTP.
+218 pruebas, sin dependencias de terceros salvo `httpx` para el cliente HTTP.
 
 ---
 
@@ -177,6 +178,7 @@ CFF art. 30.
 
 - [ADR 0001 — Serialización canónica `CORD-CANON-2`](docs/adr/0001-serializacion-canonica.md)
 - [ADR 0003 — Lectura de CFDI](docs/adr/0003-lectura-de-cfdi.md)
+- [ADR 0004 — Bitácora encadenada y registro de cesiones](docs/adr/0004-bitacora-encadenada.md)
 - [Contrato de datos del expediente](docs/contrato-expediente.md) — qué sale, qué no, y por qué
 - [Datos sintéticos](docs/datos-sinteticos.md) — RFC que no pueden ser de nadie, y huecos conocidos
 - [Frontera con CØRD Fiscal](docs/trabajo-preexistente.md) — declaración verificable
