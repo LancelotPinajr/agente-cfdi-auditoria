@@ -136,3 +136,54 @@ class EstadoDeCesion(BaseModel):
     # El financiador NO va aquí. Ver `api/app.py`: saber que un folio está
     # tomado basta para frenar la operación; saber a nombre de quién no es
     # asunto de un tercero.
+
+
+class PasoDeLaRuta(BaseModel):
+    hermano: str
+    hermano_a_la_derecha: bool
+    """El lado viaja con el hash porque `SHA256(0x01‖a‖b)` no es `SHA256(0x01‖b‖a)`.
+    Un verificador que adivine el orden acepta pruebas falsas la mitad de las veces."""
+
+
+class ConstanciaDeAnclaje(BaseModel):
+    red: str
+    referencia: str
+    anclado_en: str
+    verificable_por_terceros: bool
+    """`False` mientras el ancla sea simulada. Se reporta en vez de dejar que se
+    confunda con una publicación real — ver `bitacora/anclaje.py`."""
+
+
+class RespuestaDeAnclaje(ConstanciaDeAnclaje):
+    dia: str
+    raiz: str
+    registros: int
+
+
+class PruebaDeIntegridad(BaseModel):
+    """Lo que un tercero necesita para comprobar un folio sin confiar en nosotros.
+
+    **No trae los registros de las demás operaciones de la PYME.** Los hermanos
+    de la ruta son hashes, y de un hash no sale el RFC ni el monto de nadie: por
+    eso se usa un árbol en vez de publicar la bitácora.
+    """
+
+    uuid: str
+    posicion: int
+    dia: str
+    canonico: str
+    """El registro en su forma canónica, en base64.
+
+    Se entrega el contenido y no la hoja ya calculada: si el verificador
+    aceptara una hoja hecha, se le podría entregar el hash de un nodo interno y
+    armar un camino válido para un registro que nunca existió.
+    """
+
+    hash_anterior: str
+    hoja: str
+    ruta: list[PasoDeLaRuta]
+    raiz: str
+    registros_del_dia: int
+    ancla: ConstanciaDeAnclaje | None
+    verificable_por_terceros: bool
+    advertencia: str | None = None

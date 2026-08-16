@@ -129,7 +129,45 @@ def main() -> int:
     print(f"\ncesión de un folio con hallazgo → {con_hallazgo['veredicto']}")
     print(f"  advertencia: {con_hallazgo['advertencia']}")
 
-    print("\nverificación →", cliente.get("/bitacora/verificacion").json())
+    # --- anclaje y prueba de inclusión --------------------------------------
+    import datetime
+    import json
+    import subprocess
+
+    hoy = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    anclaje = cliente.post(f"/bitacora/anclaje?dia={hoy}").json()
+    print(f"\nanclaje del {anclaje['dia']} → {anclaje['registros']} registros")
+    print(f"  raíz : {anclaje['raiz']}")
+    print(f"  red  : {anclaje['red']}")
+    print(f"  verificable por terceros: {anclaje['verificable_por_terceros']}")
+
+    prueba = cliente.get(f"/auditoria/prueba/{limpio['uuid']}").json()
+    print(
+        f"\nprueba de {limpio['uuid'][:8]}… → {len(prueba['ruta'])} hashes "
+        f"para {prueba['registros_del_dia']} registros del día"
+    )
+
+    serializada = json.dumps(prueba)
+    ajenos = [
+        r["uuid"]
+        for r in ingesta["registros"]
+        if r["uuid"] != limpio["uuid"] and r["uuid"] in serializada
+    ]
+    if ajenos:
+        print(f"  ✗ la prueba expone {len(ajenos)} folios ajenos")
+        return 1
+    print(f"  ✓ no expone ninguno de los otros {len(ingesta['registros']) - 1} folios de la PYME")
+
+    archivo = "prueba_demo.json"
+    with open(archivo, "w", encoding="utf-8") as salida:
+        json.dump(prueba, salida, indent=2)
+    print(f"\n--- verificador independiente sobre {archivo} ---")
+    # El subproceso escribe directo al descriptor; sin vaciar antes, lo nuestro
+    # sale después de lo suyo cuando la salida va a un archivo o a una tubería.
+    sys.stdout.flush()
+    subprocess.run([sys.executable, "tools/verificar_prueba.py", archivo])
+
+    print("\nverificación de la cadena →", cliente.get("/bitacora/verificacion").json())
     return 0
 
 

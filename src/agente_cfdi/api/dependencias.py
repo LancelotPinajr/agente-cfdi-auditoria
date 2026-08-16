@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Iterator
 
 from ..bitacora.almacen import Bitacora
+from ..bitacora.anclaje import Ancla, AnclaSimulada
 from ..fuentes.configuracion import fuente_desde_entorno
 from ..fuentes.protocolo import FuenteDeLibros
 
@@ -63,3 +64,14 @@ def bitacora_actual() -> Iterator[Bitacora]:
 
 def fuente_actual() -> FuenteDeLibros:
     return fuente_desde_entorno()
+
+
+def ancla_actual() -> Ancla:
+    """Dónde se publica la raíz del día.
+
+    Hoy siempre simulada. Conectar una cadena real es sustituir esta función por
+    otra que devuelva una implementación del mismo protocolo — nada más del
+    sistema tiene que enterarse. La bandera `verificable_por_terceros` viaja
+    hasta la respuesta HTTP para que la diferencia nunca quede escondida.
+    """
+    return AnclaSimulada(etiqueta=os.environ.get("AGENTE_CFDI_ANCLA", "local"))

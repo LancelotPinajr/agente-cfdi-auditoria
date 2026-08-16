@@ -180,5 +180,96 @@ def raiz_de_merkle(hojas: Sequence[bytes]) -> bytes:
     return nivel[0]
 
 
+@dataclass(frozen=True)
+class PasoDeRuta:
+    """Un hermano del camino de una hoja hacia la raíz."""
+
+    hermano: bytes
+    hermano_a_la_derecha: bool
+    """Si el hermano va a la derecha, nosotros somos el hijo izquierdo.
+
+    El lado **tiene** que viajar con el hash: `SHA256(0x01 ‖ a ‖ b)` no es lo
+    mismo que `SHA256(0x01 ‖ b ‖ a)`. Un verificador que adivine el orden acepta
+    pruebas falsas la mitad de las veces.
+    """
+
+
+def ruta_de_merkle(hojas: Sequence[bytes], indice: int) -> tuple[PasoDeRuta, ...]:
+    """El camino de una hoja hasta la raíz (tarea 2.6).
+
+    Es lo que convierte la bitácora en algo verificable por un tercero **sin
+    entregarle la bitácora**. Un financiador que quiere comprobar su factura
+    recibe su registro, unos pocos hashes de hermanos y la raíz anclada; con eso
+    recalcula la raíz él mismo.
+
+    Lo que **no** recibe son los registros de las demás operaciones de la PYME:
+    un hermano es un hash, y de un hash no se saca el RFC ni el monto de nadie.
+    Esa es exactamente la razón de usar un árbol y no publicar la lista.
+
+    Para 40 registros el camino son 6 hashes: 192 bytes contra la bitácora
+    completa.
+    """
+    if not hojas:
+        raise ValueError("no hay hojas: un día sin registros no tiene raíz que anclar")
+    if not 0 <= indice < len(hojas):
+        raise IndexError(f"la hoja {indice} no existe entre {len(hojas)} hojas")
+
+    pasos: list[PasoDeRuta] = []
+    nivel = list(hojas)
+    posicion = indice
+
+    while len(nivel) > 1:
+        promovido = len(nivel) % 2 == 1 and posicion == len(nivel) - 1
+        siguiente = [_nodo(nivel[i], nivel[i + 1]) for i in range(0, len(nivel) - 1, 2)]
+        if len(nivel) % 2:
+            siguiente.append(nivel[-1])
+
+        if promovido:
+            # Subió solo: no tiene hermano en este nivel, así que no hay paso
+            # que registrar. Duplicarlo aquí para «rellenar» sería reintroducir
+            # CVE-2012-2459 por la puerta de atrás.
+            posicion = len(siguiente) - 1
+        else:
+            es_izquierdo = posicion % 2 == 0
+            hermano = nivel[posicion + 1] if es_izquierdo else nivel[posicion - 1]
+            pasos.append(PasoDeRuta(hermano=hermano, hermano_a_la_derecha=es_izquierdo))
+            posicion //= 2
+
+        nivel = siguiente
+
+    return tuple(pasos)
+
+
+def raiz_desde_ruta(hoja: bytes, ruta: Sequence[PasoDeRuta]) -> bytes:
+    """Recalcula la raíz subiendo desde una hoja. El corazón de la verificación."""
+    if len(hoja) != TAMANO_HASH:
+        raise ValueError(f"la hoja mide {len(hoja)} bytes; se esperaban {TAMANO_HASH}")
+    actual = bytes(hoja)
+    for paso in ruta:
+        if len(paso.hermano) != TAMANO_HASH:
+            raise ValueError("un hermano de la ruta no mide 32 bytes")
+        if paso.hermano_a_la_derecha:
+            actual = _nodo(actual, paso.hermano)
+        else:
+            actual = _nodo(paso.hermano, actual)
+    return actual
+
+
+def verificar_prueba(
+    *, canonico: bytes, hash_anterior: bytes, ruta: Sequence[PasoDeRuta], raiz: bytes
+) -> bool:
+    """¿Este registro está de verdad bajo esta raíz?
+
+    Recibe el **canónico**, no la hoja ya calculada. Es deliberado: si el
+    verificador aceptara una hoja hecha, quien presenta la prueba podría entregar
+    el hash de un nodo interno y armar un camino válido para un registro que
+    nunca existió. Al exigir el contenido, la hoja se recalcula con el prefijo
+    `0x00` y un nodo interno —que lleva `0x01`— jamás puede hacerse pasar por
+    ella.
+    """
+    hoja = hash_de_registro(canonico, hash_anterior)
+    return raiz_desde_ruta(hoja, ruta) == bytes(raiz)
+
+
 def _nodo(izquierdo: bytes, derecho: bytes) -> bytes:
     return hashlib.sha256(PREFIJO_NODO + izquierdo + derecho).digest()

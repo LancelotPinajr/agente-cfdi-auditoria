@@ -82,13 +82,13 @@ es auditable sin confiar en el modelo.
 | Verificación del modelo | ✅ vía Gemini API; Vertex pendiente |
 | Bitácora encadenada | ✅ |
 | Registro de cesiones | ✅ |
-| Raíz de Merkle | ✅ |
 | Endpoints de ingesta y cesión | ✅ |
 | Cotejo contra los libros | ✅ |
-| Anclaje en cadena | ⬜ Sprint 2 |
+| Prueba de inclusión (Merkle) | ✅ |
+| Anclaje | ⚠️ simulado — falta conectar red real |
 | Agente ADK en Cloud Run | ⬜ carril de infraestructura |
 
-258 pruebas. El núcleo verificable —canon, hashes, cadena, Merkle, cotejo— no
+320 pruebas. El núcleo verificable —canon, hashes, cadena, Merkle, cotejo— no
 depende de nada externo; FastAPI, uvicorn y httpx entran solo en el borde HTTP.
 
 ---
@@ -152,7 +152,8 @@ repo obtiene una demo que funciona, no un error de credenciales.
 | `GET` | `/cesiones/{uuid}` | ¿Está tomado? (no dice a nombre de quién) |
 | `GET` | `/bitacora/verificacion` | Recorre la cadena entera y reporta si es íntegra |
 | `GET` | `/salud` | Sonda de vida |
-| `GET` | `/auditoria/prueba/{uuid}` | [PENDIENTE — 2.8] |
+| `POST` | `/bitacora/anclaje` | Publica la raíz de Merkle del día (job diario) |
+| `GET` | `/auditoria/prueba/{uuid}` | La prueba de inclusión, verificable sin nosotros |
 
 Levantar y correr el escenario completo:
 
@@ -185,7 +186,33 @@ financiador.
 
 ## Contrato en blockchain
 
-[PENDIENTE — 2.7, 3.6]
+**Todavía no hay anclaje real.** Está hecho todo lo que lo rodea —árbol de
+Merkle, ruta de inclusión, endpoint, constancia, idempotencia del job diario y
+verificador independiente— detrás de un protocolo con una implementación
+simulada.
+
+El ancla simulada **se declara como tal** en cada respuesta
+(`verificable_por_terceros: false`, más una advertencia en texto) y el
+verificador sale con código 2 en vez de 0. Un ancla de mentira que pareciera real
+sería peor que ninguna: pasaría por buena en un video de demo.
+
+Conectar una red es sustituir una clase por otra que cumpla el mismo protocolo;
+exige decidir red, financiar gas y manejar una llave — riesgos que no son de
+código. Ver [ADR 0006](docs/adr/0006-anclaje-y-prueba.md).
+
+### Verificar una prueba sin confiar en nosotros
+
+```bash
+curl -s localhost:8000/auditoria/prueba/<UUID> > prueba.json
+```
+
+```bash
+python tools/verificar_prueba.py prueba.json
+```
+
+Ese script **no importa una sola línea de este proyecto** — solo `hashlib`,
+`json` y `base64`. Si la verificación usara nuestro código, comprobaría que
+nuestro código coincide consigo mismo, que no demuestra nada.
 
 ---
 
@@ -219,6 +246,7 @@ CFF art. 30.
 - [ADR 0003 — Lectura de CFDI](docs/adr/0003-lectura-de-cfdi.md)
 - [ADR 0004 — Bitácora encadenada y registro de cesiones](docs/adr/0004-bitacora-encadenada.md)
 - [ADR 0005 — Endpoints de ingesta y cesión](docs/adr/0005-endpoints.md)
+- [ADR 0006 — Prueba de inclusión y anclaje](docs/adr/0006-anclaje-y-prueba.md)
 - [Contrato de datos del expediente](docs/contrato-expediente.md) — qué sale, qué no, y por qué
 - [Datos sintéticos](docs/datos-sinteticos.md) — RFC que no pueden ser de nadie, y huecos conocidos
 - [Frontera con CØRD Fiscal](docs/trabajo-preexistente.md) — declaración verificable

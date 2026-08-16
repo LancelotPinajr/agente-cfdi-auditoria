@@ -29,21 +29,28 @@ inconsistentes. Se responde «no pude preguntar», que es la verdad.
 
 from __future__ import annotations
 
+import base64
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile, status
 
 from ..auditoria.cotejo import cotejar_lote
 from ..bitacora.almacen import Bitacora
+from ..bitacora.anclaje import Ancla, ErrorDeAnclaje
 from ..cfdi.errores import CFDIInvalido
 from ..cfdi.lector import leer_cfdi
 from ..fuentes.protocolo import ErrorDeFuente, FuenteDeLibros
-from .dependencias import bitacora_actual, fuente_actual
+from .dependencias import ancla_actual, bitacora_actual, fuente_actual
 from .esquemas import (
+    ConstanciaDeAnclaje,
     EstadoDeCesion,
     LecturaRechazada,
+    PasoDeLaRuta,
     PeticionDeCesion,
+    PruebaDeIntegridad,
     RegistroAuditado,
+    RespuestaDeAnclaje,
     RespuestaDeCesion,
     RespuestaDeIngesta,
 )
@@ -332,3 +339,111 @@ def verificacion(bitacora: Bitacora = Depends(bitacora_actual)) -> dict:
         "suprimidos_por_retencion": altura - recalculados,
         "punta": bitacora.punta().hex(),
     }
+
+
+@app.post("/bitacora/anclaje", response_model=RespuestaDeAnclaje)
+def anclar(
+    dia: str | None = None,
+    bitacora: Bitacora = Depends(bitacora_actual),
+    ancla: Ancla = Depends(ancla_actual),
+) -> RespuestaDeAnclaje:
+    """Publica la raíz del día (tarea 2.7). Lo dispara el job diario.
+
+    **Anclar dos veces el mismo día devuelve la constancia original**, no una
+    nueva. Un job que se reintenta no debe producir dos raíces «oficiales»: un
+    tercero no sabría cuál creer, y la segunda además sería distinta si
+    entretanto entraron registros.
+    """
+    objetivo = dia or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        constancia = bitacora.anclar_dia(objetivo, ancla)
+    except ValueError as vacio:
+        # Un día sin registros no tiene raíz. No es un error del servidor: no
+        # hay nada que publicar.
+        raise HTTPException(status.HTTP_409_CONFLICT, f"{objetivo}: {vacio}") from vacio
+    except ErrorDeAnclaje as falla:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, f"no se pudo anclar {objetivo}: {falla}"
+        ) from falla
+
+    fila = bitacora.ancla_del_dia(objetivo)
+    return RespuestaDeAnclaje(
+        dia=objetivo,
+        raiz=bytes(fila["raiz"]).hex(),
+        registros=int(fila["registros"]),
+        red=constancia.red,
+        referencia=constancia.referencia,
+        anclado_en=fila["anclado_en"],
+        verificable_por_terceros=constancia.verificable_por_terceros,
+    )
+
+
+@app.get("/auditoria/prueba/{uuid}", response_model=PruebaDeIntegridad)
+def prueba_de_integridad(
+    uuid: str, bitacora: Bitacora = Depends(bitacora_actual)
+) -> PruebaDeIntegridad:
+    """La prueba de que un folio está en la bitácora, verificable **sin nosotros**.
+
+    Devuelve el registro del folio, el camino de hermanos hasta la raíz del día y
+    el ancla. Con eso un financiador recalcula la raíz por su cuenta y la compara
+    contra la publicada — ver `tools/verificar_prueba.py`, que lo hace sin
+    importar una sola línea de este proyecto.
+
+    **Lo que no devuelve** son los registros de las demás operaciones de la PYME.
+    Los hermanos del camino son hashes; de un hash no sale el RFC ni el monto de
+    nadie. Para 40 registros del día, el camino son 6 hashes.
+    """
+    folio = uuid.strip().upper()
+    try:
+        prueba = bitacora.prueba_de(folio)
+    except ValueError as suprimido:
+        # El registro caducó por retención: el eslabón sigue en la cadena pero
+        # el canónico ya no está. Entregar una prueba que el receptor no puede
+        # verificar sería peor que no entregar ninguna.
+        raise HTTPException(status.HTTP_410_GONE, str(suprimido)) from suprimido
+
+    if prueba is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, f"el folio {folio} no está en la bitácora"
+        )
+
+    if prueba.ancla is None:
+        advertencia = (
+            "el día de este registro todavía no se ancla, así que esta prueba solo "
+            "demuestra consistencia interna de nuestra bitácora — que es justo lo que "
+            "un tercero no tiene por qué creernos"
+        )
+    elif not prueba.verificable_por_terceros:
+        advertencia = (
+            f"el ancla es SIMULADA ({prueba.ancla.red}): no está publicada en ninguna "
+            f"red y no se puede comprobar fuera de este sistema"
+        )
+    else:
+        advertencia = None
+
+    return PruebaDeIntegridad(
+        uuid=prueba.uuid,
+        posicion=prueba.posicion,
+        dia=prueba.dia,
+        canonico=base64.b64encode(prueba.canonico).decode("ascii"),
+        hash_anterior=prueba.hash_anterior.hex(),
+        hoja=prueba.hoja.hex(),
+        ruta=[
+            PasoDeLaRuta(hermano=p.hermano.hex(), hermano_a_la_derecha=p.hermano_a_la_derecha)
+            for p in prueba.ruta
+        ],
+        raiz=prueba.raiz.hex(),
+        registros_del_dia=prueba.registros_del_dia,
+        ancla=(
+            ConstanciaDeAnclaje(
+                red=prueba.ancla.red,
+                referencia=prueba.ancla.referencia,
+                anclado_en=prueba.ancla.anclado_en.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                verificable_por_terceros=prueba.ancla.verificable_por_terceros,
+            )
+            if prueba.ancla
+            else None
+        ),
+        verificable_por_terceros=prueba.verificable_por_terceros,
+        advertencia=advertencia,
+    )

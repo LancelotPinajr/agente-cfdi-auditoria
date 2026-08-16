@@ -461,3 +461,195 @@ def test_alterar_la_base_por_debajo_se_detecta_en_la_verificacion(cliente, lote,
     cuerpo = cliente.get("/bitacora/verificacion").json()
     assert cuerpo["integra"] is False
     assert cuerpo["posicion_del_problema"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# Anclaje y prueba de integridad (tareas 2.7 y 2.8)
+# --------------------------------------------------------------------------- #
+
+HOY = __import__("datetime").datetime.now(
+    __import__("datetime").timezone.utc
+).strftime("%Y-%m-%d")
+
+
+def test_anclar_publica_la_raiz_del_dia(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cuerpo = cliente.post(f"/bitacora/anclaje?dia={HOY}").json()
+
+    assert cuerpo["dia"] == HOY
+    assert cuerpo["registros"] == 6
+    assert len(cuerpo["raiz"]) == 64
+
+
+def test_el_ancla_simulada_se_declara_como_tal(cliente, lote):
+    """Un ancla de mentira que pareciera real pasaría por buena en un video."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cuerpo = cliente.post(f"/bitacora/anclaje?dia={HOY}").json()
+
+    assert cuerpo["red"].startswith("simulada:")
+    assert cuerpo["verificable_por_terceros"] is False
+
+
+def test_anclar_dos_veces_el_mismo_dia_devuelve_la_constancia_original(cliente, lote):
+    """Un job diario que se reintenta no debe producir dos raíces «oficiales»."""
+    cliente.post("/ingesta", files=archivos_de(lote, 3))
+    primera = cliente.post(f"/bitacora/anclaje?dia={HOY}").json()
+
+    cliente.post("/ingesta", files=archivos_de(lote, 3))  # entran más registros
+    segunda = cliente.post(f"/bitacora/anclaje?dia={HOY}").json()
+
+    assert segunda["referencia"] == primera["referencia"]
+    assert segunda["raiz"] == primera["raiz"]
+    assert segunda["registros"] == 3
+
+
+def test_un_dia_sin_registros_no_se_ancla(cliente):
+    respuesta = cliente.post("/bitacora/anclaje?dia=2020-01-01")
+    assert respuesta.status_code == 409
+    assert "sin registros" in respuesta.json()["detail"]
+
+
+def test_la_prueba_de_integridad_verifica(cliente, lote):
+    """El camino recalculado tiene que dar la raíz anclada."""
+    import base64
+
+    from agente_cfdi.bitacora.cadena import PasoDeRuta, verificar_prueba
+
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+    uuid = lote.comprobantes[2].uuid
+
+    p = cliente.get(f"/auditoria/prueba/{uuid}").json()
+
+    assert verificar_prueba(
+        canonico=base64.b64decode(p["canonico"]),
+        hash_anterior=bytes.fromhex(p["hash_anterior"]),
+        ruta=[
+            PasoDeRuta(bytes.fromhex(x["hermano"]), x["hermano_a_la_derecha"]) for x in p["ruta"]
+        ],
+        raiz=bytes.fromhex(p["raiz"]),
+    )
+
+
+def test_la_prueba_no_expone_las_demas_operaciones_de_la_pyme(cliente, lote):
+    """La razón de usar un árbol en vez de publicar la bitácora.
+
+    Los hermanos del camino son hashes: de un hash no sale el RFC ni el monto de
+    nadie. En la prueba solo puede aparecer el folio que se pidió.
+    """
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+    pedido = lote.comprobantes[2]
+
+    crudo = cliente.get(f"/auditoria/prueba/{pedido.uuid}").text
+
+    for otro in lote.comprobantes:
+        if otro.uuid == pedido.uuid:
+            continue
+        assert otro.uuid not in crudo
+        assert str(otro.total) not in crudo
+
+
+def test_la_prueba_sin_ancla_lo_advierte(cliente, lote):
+    """Sin ancla solo se demuestra consistencia interna — justo lo que no hay
+    por qué creernos."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    p = cliente.get(f"/auditoria/prueba/{lote.comprobantes[0].uuid}").json()
+
+    assert p["ancla"] is None
+    assert p["verificable_por_terceros"] is False
+    assert "todavía no se ancla" in p["advertencia"]
+
+
+def test_la_prueba_con_ancla_simulada_lo_advierte(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+    p = cliente.get(f"/auditoria/prueba/{lote.comprobantes[0].uuid}").json()
+
+    assert p["verificable_por_terceros"] is False
+    assert "SIMULADA" in p["advertencia"]
+
+
+def test_un_folio_desconocido_no_tiene_prueba(cliente):
+    respuesta = cliente.get("/auditoria/prueba/00000000-0000-0000-0000-000000000000")
+    assert respuesta.status_code == 404
+
+
+def test_un_registro_suprimido_por_retencion_devuelve_410(cliente, lote, tmp_path):
+    """Entregar una prueba que el receptor no puede verificar sería peor que ninguna."""
+    import sqlite3
+
+    cliente.post("/ingesta", files=archivos_de(lote, 3))
+    conexion = sqlite3.connect(tmp_path / "bitacora.db")
+    conexion.execute("DELETE FROM bitacora_registros WHERE posicion = 1")
+    conexion.commit()
+    conexion.close()
+
+    respuesta = cliente.get(f"/auditoria/prueba/{lote.comprobantes[1].uuid}")
+    assert respuesta.status_code == 410
+    assert "retención" in respuesta.json()["detail"]
+    # Y la cadena sigue íntegra: el eslabón no se fue.
+    assert cliente.get("/bitacora/verificacion").json()["integra"] is True
+
+
+def test_el_verificador_independiente_acepta_lo_que_produce_la_api(cliente, lote, tmp_path):
+    """`tools/verificar_prueba.py` no importa nada de este proyecto.
+
+    Si la verificación usara nuestro código, comprobaría que nuestro código
+    coincide consigo mismo, que no demuestra nada.
+    """
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+    p = cliente.get(f"/auditoria/prueba/{lote.comprobantes[4].uuid}").json()
+
+    archivo = tmp_path / "prueba.json"
+    archivo.write_text(json.dumps(p), encoding="utf-8")
+    guion = Path(__file__).parent.parent / "tools" / "verificar_prueba.py"
+
+    salida = subprocess.run(
+        [sys.executable, str(guion), str(archivo)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    # 2 = todo cuadra pero el ancla es simulada. 1 sería prueba inválida.
+    assert salida.returncode == 2, salida.stdout + salida.stderr
+    assert "el contenido produce la hoja declarada" in salida.stdout
+    assert "el camino lleva a la raíz declarada" in salida.stdout
+    assert "SIMULADA" in salida.stdout
+
+
+def test_el_verificador_independiente_rechaza_una_prueba_manipulada(cliente, lote, tmp_path):
+    import base64
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+    p = cliente.get(f"/auditoria/prueba/{lote.comprobantes[4].uuid}").json()
+
+    # Alguien infla el monto del registro y espera que la prueba pase igual.
+    canonico = base64.b64decode(p["canonico"]).replace(b"|sMXN|", b"|sUSD|")
+    p["canonico"] = base64.b64encode(canonico).decode()
+
+    archivo = tmp_path / "manipulada.json"
+    archivo.write_text(json.dumps(p), encoding="utf-8")
+    guion = Path(__file__).parent.parent / "tools" / "verificar_prueba.py"
+
+    salida = subprocess.run(
+        [sys.executable, str(guion), str(archivo)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    assert salida.returncode == 1
+    assert "NO produce la hoja declarada" in salida.stdout

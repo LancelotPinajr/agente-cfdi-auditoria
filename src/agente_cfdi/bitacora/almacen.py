@@ -50,7 +50,16 @@ from decimal import Decimal
 from typing import Any, Iterator, Mapping
 
 from ..dominio.canonico import canonicalizar
-from .cadena import Eslabon, genesis, hash_de_registro, raiz_de_merkle, verificar_cadena
+from .anclaje import Ancla, Constancia
+from .cadena import (
+    Eslabon,
+    PasoDeRuta,
+    genesis,
+    hash_de_registro,
+    raiz_de_merkle,
+    ruta_de_merkle,
+    verificar_cadena,
+)
 from .eventos import Evento, esquema_de
 
 ESQUEMA_SQL = """
@@ -99,12 +108,53 @@ CREATE TABLE IF NOT EXISTS auditorias (
     PRIMARY KEY (inquilino, uuid)
 );
 
+-- Las raíces publicadas. Una por día e inquilino: anclar dos veces el mismo día
+-- produciría dos raíces «oficiales» y un tercero no sabría cuál creer.
+CREATE TABLE IF NOT EXISTS anclas (
+    inquilino  TEXT NOT NULL,
+    dia        TEXT NOT NULL,
+    raiz       BLOB NOT NULL,
+    red        TEXT NOT NULL,
+    referencia TEXT NOT NULL,
+    anclado_en TEXT NOT NULL,
+    registros  INTEGER NOT NULL,
+    PRIMARY KEY (inquilino, dia)
+);
+
 CREATE INDEX IF NOT EXISTS idx_cadena_dia ON bitacora_cadena (inquilino, escrito_en);
 """
 
 
 class BitacoraCorrupta(RuntimeError):
     """El almacén está en un estado que no debería poder alcanzar."""
+
+
+@dataclass(frozen=True)
+class PruebaDeInclusion:
+    """Todo lo que un tercero necesita para comprobar un folio **por su cuenta**.
+
+    No trae los registros de las demás operaciones de la PYME: los hermanos de
+    la ruta son hashes, y de un hash no sale el RFC ni el monto de nadie. Esa es
+    la razón de usar un árbol en vez de publicar la lista.
+    """
+
+    uuid: str
+    posicion: int
+    dia: str
+    canonico: bytes
+    hash_anterior: bytes
+    hoja: bytes
+    ruta: tuple[PasoDeRuta, ...]
+    raiz: bytes
+    registros_del_dia: int
+    ancla: Constancia | None
+    """`None` mientras el día no se haya anclado. Sin ancla la prueba solo dice
+    «está en nuestra bitácora», que es justo lo que un tercero no tiene por qué
+    creernos."""
+
+    @property
+    def verificable_por_terceros(self) -> bool:
+        return self.ancla is not None and self.ancla.verificable_por_terceros
 
 
 @dataclass(frozen=True)
@@ -384,6 +434,110 @@ class Bitacora:
     def raiz_del_dia(self, dia: str) -> bytes:
         """La raíz de Merkle a anclar. Levanta si el día no tuvo registros."""
         return raiz_de_merkle(self.hojas_del_dia(dia))
+
+    # ------------------------------------------------------------------ #
+    # Anclaje y prueba de inclusión (tareas 2.7 y 2.8)
+    # ------------------------------------------------------------------ #
+
+    def anclar_dia(self, dia: str, ancla: Ancla) -> Constancia:
+        """Publica la raíz del día y guarda la constancia.
+
+        **Anclar dos veces el mismo día devuelve la constancia original.** Un
+        job diario que se reintenta no debe producir dos raíces «oficiales»: un
+        tercero no sabría cuál creer, y la segunda además sería distinta si
+        entretanto entraron registros nuevos.
+        """
+        existente = self.ancla_del_dia(dia)
+        if existente is not None:
+            return Constancia(
+                red=existente["red"],
+                referencia=existente["referencia"],
+                anclado_en=datetime.fromisoformat(existente["anclado_en"].replace("Z", "+00:00")),
+            )
+
+        hojas = self.hojas_del_dia(dia)
+        raiz = raiz_de_merkle(hojas)  # levanta si el día no tuvo registros
+        constancia = ancla.anclar(raiz, dia=dia)
+
+        with self._transaccion():
+            self._cx.execute(
+                "INSERT INTO anclas (inquilino, dia, raiz, red, referencia, anclado_en, registros)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    self.inquilino,
+                    dia,
+                    raiz,
+                    constancia.red,
+                    constancia.referencia,
+                    _texto(constancia.anclado_en),
+                    len(hojas),
+                ),
+            )
+        return constancia
+
+    def ancla_del_dia(self, dia: str) -> sqlite3.Row | None:
+        return self._cx.execute(
+            "SELECT * FROM anclas WHERE inquilino = ? AND dia = ?", (self.inquilino, dia)
+        ).fetchone()
+
+    def prueba_de(self, uuid: str) -> "PruebaDeInclusion | None":
+        """Arma la prueba de que el registro de un folio está bajo la raíz de su día.
+
+        Devuelve `None` si el folio nunca se auditó. Levanta `ValueError` si el
+        registro fue suprimido por retención: sin el canónico no se puede
+        recalcular la hoja, y entregar una prueba que el receptor no puede
+        verificar sería peor que no entregar ninguna.
+        """
+        auditoria = self.auditoria_de(uuid)
+        if auditoria is None:
+            return None
+
+        posicion = int(auditoria["posicion"])
+        fila = self._cx.execute(
+            "SELECT c.escrito_en, c.hash_registro, c.hash_anterior, r.canonico"
+            "  FROM bitacora_cadena c"
+            "  LEFT JOIN bitacora_registros r"
+            "    ON r.inquilino = c.inquilino AND r.posicion = c.posicion"
+            " WHERE c.inquilino = ? AND c.posicion = ?",
+            (self.inquilino, posicion),
+        ).fetchone()
+        if fila is None:  # pragma: no cover - el índice apunta a la cadena
+            raise BitacoraCorrupta(f"el índice apunta a la posición {posicion}, que no existe")
+        if fila["canonico"] is None:
+            raise ValueError(
+                f"el registro del folio {uuid} se suprimió por retención; "
+                f"su eslabón sigue en la cadena pero la prueba ya no se puede recalcular"
+            )
+
+        dia = fila["escrito_en"][:10]
+        hojas = self.hojas_del_dia(dia)
+        hoja = bytes(fila["hash_registro"])
+        try:
+            indice = hojas.index(hoja)
+        except ValueError:  # pragma: no cover - la hoja sale del mismo día
+            raise BitacoraCorrupta(f"la hoja de la posición {posicion} no está en su día") from None
+
+        ancla = self.ancla_del_dia(dia)
+        return PruebaDeInclusion(
+            uuid=uuid,
+            posicion=posicion,
+            dia=dia,
+            canonico=bytes(fila["canonico"]),
+            hash_anterior=bytes(fila["hash_anterior"]),
+            hoja=hoja,
+            ruta=ruta_de_merkle(hojas, indice),
+            raiz=raiz_de_merkle(hojas),
+            registros_del_dia=len(hojas),
+            ancla=(
+                Constancia(
+                    red=ancla["red"],
+                    referencia=ancla["referencia"],
+                    anclado_en=datetime.fromisoformat(ancla["anclado_en"].replace("Z", "+00:00")),
+                )
+                if ancla
+                else None
+            ),
+        )
 
     def cesion_de(self, uuid: str) -> sqlite3.Row | None:
         return self._cx.execute("SELECT * FROM cesiones WHERE uuid = ?", (uuid,)).fetchone()
