@@ -83,6 +83,22 @@ CREATE TABLE IF NOT EXISTS cesiones (
     cedido_en    TEXT    NOT NULL
 );
 
+-- Modelo de lectura: dónde quedó la última auditoría de cada folio.
+--
+-- Es un índice, no una fuente de verdad. La verdad está en la cadena; esto
+-- existe para no tener que recorrerla entera cada vez que alguien pregunta por
+-- un UUID, y para que la prueba de integridad (2.8) sepa qué eslabón traer.
+-- Si se borrara, se podría reconstruir leyendo los canónicos.
+CREATE TABLE IF NOT EXISTS auditorias (
+    uuid      TEXT    NOT NULL,
+    inquilino TEXT    NOT NULL,
+    posicion  INTEGER NOT NULL,
+    total     TEXT    NOT NULL,
+    moneda    TEXT    NOT NULL,
+    veredicto TEXT    NOT NULL,
+    PRIMARY KEY (inquilino, uuid)
+);
+
 CREATE INDEX IF NOT EXISTS idx_cadena_dia ON bitacora_cadena (inquilino, escrito_en);
 """
 
@@ -106,9 +122,17 @@ class ResultadoDeCesion:
     posicion: int
     """Del evento que se acaba de escribir — aceptado o rechazado, siempre queda."""
     posicion_de_la_cesion_previa: int | None = None
+    repetida: bool = False
+    """La cesión ya existía **y es del mismo financiador**.
+
+    Es un reintento, no un fraude. Se responde éxito y no se escribe nada nuevo
+    — ver `registrar_cesion`.
+    """
 
     @property
     def motivo(self) -> str:
+        if self.repetida:
+            return "la cesión ya estaba registrada a nombre de este financiador"
         if self.aceptada:
             return "cesion_registrada"
         return "el folio fiscal ya fue cedido"
@@ -173,12 +197,31 @@ class Bitacora:
 
         Aceptada o rechazada, el intento queda en la bitácora. Una bitácora que
         solo guarda lo que salió bien no sirve para investigar nada.
+
+        **Excepción: el reintento del mismo financiador.** Si la cesión ya existe
+        y es de quien vuelve a pedirla, se responde éxito y **no se escribe
+        nada**. Un cliente cuya petición expiró por red no puede distinguir «no
+        llegó» de «llegó y se perdió la respuesta»; va a reintentar. Tratar ese
+        reintento como doble cesión le diría a un financiador honesto que
+        cometió fraude, y anotarlo en la bitácora inflaría la cadena con un
+        evento por cada paquete perdido.
+
+        No hay ambigüedad en devolver éxito: si ese financiador ya tiene la
+        cesión, pedirla otra vez no cambia nada.
         """
         ahora = _ahora()
         with self._transaccion():
             previa = self._cx.execute(
-                "SELECT posicion FROM cesiones WHERE uuid = ?", (uuid,)
+                "SELECT posicion, financiador FROM cesiones WHERE uuid = ?", (uuid,)
             ).fetchone()
+
+            if previa is not None and previa["financiador"] == financiador:
+                return ResultadoDeCesion(
+                    aceptada=True,
+                    posicion=int(previa["posicion"]),
+                    posicion_de_la_cesion_previa=int(previa["posicion"]),
+                    repetida=True,
+                )
 
             if previa is not None:
                 anexado = self._anexar_sin_transaccion(
@@ -221,6 +264,58 @@ class Bitacora:
                 raise _CarreraDeCesion(uuid) from None
 
             return ResultadoDeCesion(aceptada=True, posicion=anexado.posicion)
+
+    def anexar_auditoria(
+        self,
+        *,
+        uuid: str,
+        rfc_emisor: str,
+        rfc_receptor: str,
+        total: Decimal,
+        moneda: str,
+        fecha_emision: str,
+        veredicto: str,
+        fuente_de_libros: str,
+        monto_en_libros: Decimal | None = None,
+    ) -> Anexado:
+        """Escribe una auditoría y actualiza el índice por UUID.
+
+        Reauditar el mismo folio es legítimo —los libros cambian, un movimiento
+        que faltaba aparece— así que la cadena conserva **todas** las
+        auditorías y el índice apunta a la última. La cadena es la historia; el
+        índice es solo el atajo.
+        """
+        with self._transaccion():
+            anexado = self._anexar_sin_transaccion(
+                Evento.CFDI_AUDITADO,
+                {
+                    "uuid": uuid,
+                    "rfc_emisor": rfc_emisor,
+                    "rfc_receptor": rfc_receptor,
+                    "total": total,
+                    "moneda": moneda,
+                    "fecha_emision": fecha_emision,
+                    "veredicto": veredicto,
+                    "monto_en_libros": monto_en_libros,
+                    "fuente_de_libros": fuente_de_libros,
+                },
+            )
+            self._cx.execute(
+                "INSERT INTO auditorias (uuid, inquilino, posicion, total, moneda, veredicto)"
+                " VALUES (?, ?, ?, ?, ?, ?)"
+                " ON CONFLICT (inquilino, uuid) DO UPDATE SET"
+                "   posicion = excluded.posicion, total = excluded.total,"
+                "   moneda = excluded.moneda, veredicto = excluded.veredicto",
+                (uuid, self.inquilino, anexado.posicion, str(total), moneda, veredicto),
+            )
+            return anexado
+
+    def auditoria_de(self, uuid: str) -> sqlite3.Row | None:
+        """La última auditoría de un folio, o `None` si nunca se auditó."""
+        return self._cx.execute(
+            "SELECT * FROM auditorias WHERE inquilino = ? AND uuid = ?",
+            (self.inquilino, uuid),
+        ).fetchone()
 
     def suprimir_registro(self, posicion: int) -> None:
         """Borra el contenido de un registro, conservando su eslabón.

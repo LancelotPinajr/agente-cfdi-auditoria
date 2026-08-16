@@ -83,10 +83,13 @@ es auditable sin confiar en el modelo.
 | Bitácora encadenada | ✅ |
 | Registro de cesiones | ✅ |
 | Raíz de Merkle | ✅ |
+| Endpoints de ingesta y cesión | ✅ |
+| Cotejo contra los libros | ✅ |
 | Anclaje en cadena | ⬜ Sprint 2 |
 | Agente ADK en Cloud Run | ⬜ carril de infraestructura |
 
-218 pruebas, sin dependencias de terceros salvo `httpx` para el cliente HTTP.
+258 pruebas. El núcleo verificable —canon, hashes, cadena, Merkle, cotejo— no
+depende de nada externo; FastAPI, uvicorn y httpx entran solo en el borde HTTP.
 
 ---
 
@@ -142,7 +145,43 @@ repo obtiene una demo que funciona, no un error de credenciales.
 
 ## Endpoints
 
-[PENDIENTE — 2.4, 2.8]
+| Método | Ruta | Qué hace |
+|---|---|---|
+| `POST` | `/ingesta` | Sube un lote de CFDI XML: los lee, los audita contra los libros y los encadena |
+| `POST` | `/cesiones` | Intenta ceder un folio a un financiador |
+| `GET` | `/cesiones/{uuid}` | ¿Está tomado? (no dice a nombre de quién) |
+| `GET` | `/bitacora/verificacion` | Recorre la cadena entera y reporta si es íntegra |
+| `GET` | `/salud` | Sonda de vida |
+| `GET` | `/auditoria/prueba/{uuid}` | [PENDIENTE — 2.8] |
+
+Levantar y correr el escenario completo:
+
+```bash
+python -m uvicorn agente_cfdi.api.app:app --port 8000
+```
+
+```bash
+python tools/demo.py
+```
+
+`tools/demo.py` genera el lote **con la misma semilla que usa la fuente de
+libros**. Sin eso, los libros no contienen los folios que se suben y todo sale
+`sin_respaldo` — no porque el auditor falle, sino porque se le pregunta por
+facturas de otra empresa.
+
+### Códigos de estado que significan algo
+
+| Situación | Código |
+|---|---|
+| Folio ya cedido a **otro** financiador | `409` |
+| Folio ya cedido al **mismo** (reintento de red) | `200`, idempotente |
+| Libros inalcanzables | `503`, **no** «sin respaldo» |
+| CFDI ilegible o duplicado dentro del lote | se reporta en `fallas`; el lote sigue |
+
+**Hueco declarado:** los endpoints no autentican a quien llama. En Cloud Run
+quedan detrás de IAM, pero eso protege el perímetro y no distingue a un
+financiador de otro. Antes de datos reales hace falta autenticación por
+financiador.
 
 ## Contrato en blockchain
 
@@ -179,6 +218,7 @@ CFF art. 30.
 - [ADR 0001 — Serialización canónica `CORD-CANON-2`](docs/adr/0001-serializacion-canonica.md)
 - [ADR 0003 — Lectura de CFDI](docs/adr/0003-lectura-de-cfdi.md)
 - [ADR 0004 — Bitácora encadenada y registro de cesiones](docs/adr/0004-bitacora-encadenada.md)
+- [ADR 0005 — Endpoints de ingesta y cesión](docs/adr/0005-endpoints.md)
 - [Contrato de datos del expediente](docs/contrato-expediente.md) — qué sale, qué no, y por qué
 - [Datos sintéticos](docs/datos-sinteticos.md) — RFC que no pueden ser de nadie, y huecos conocidos
 - [Frontera con CØRD Fiscal](docs/trabajo-preexistente.md) — declaración verificable
