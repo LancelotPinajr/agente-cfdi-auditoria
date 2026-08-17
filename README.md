@@ -1,9 +1,16 @@
 # Agente de Aseguramiento y Cesión de CFDI
 
+[![pruebas](https://github.com/LancelotPinajr/agente-cfdi-auditoria/actions/workflows/pruebas.yml/badge.svg)](https://github.com/LancelotPinajr/agente-cfdi-auditoria/actions/workflows/pruebas.yml)
+
 Un agente que audita CFDI de una PYME mexicana, los escribe en una bitácora
 encadenada por hash, detecta cuando una factura se intenta ceder dos veces, y
-ancla la evidencia del día en una cadena pública — de modo que un financiador
-pueda verificarla **sin confiar en nosotros**.
+publica la raíz de la evidencia del día — de modo que un financiador pueda
+verificarla **sin confiar en nosotros**.
+
+> **El anclaje todavía es simulado.** El árbol de Merkle, la prueba de
+> inclusión, el endpoint y el verificador independiente están hechos; falta
+> conectar una red real. Mientras tanto cada respuesta lo declara
+> (`verificable_por_terceros: false`) en vez de dejarlo escrito solo aquí.
 
 Escrito para el [All Things Agentic Hackathon](https://allthingsagentichackathon.devpost.com/),
 categoría *Fortified Enterprise Fleet*.
