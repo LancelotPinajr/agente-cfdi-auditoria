@@ -70,9 +70,21 @@ Debe imprimir `ok`.
 | `WALLET_PRIVATE_KEY` | Llave privada EVM (consumida vía Secret Manager) |
 
 ## Despliegue
-El agente estará desplegado en Cloud Run.
-El **Cloud Scheduler** está configurado para ejecutarse todos los días a las `23:59 CST`, enviando un POST al Cloud Run para disparar el cierre del día, con política de reintentos automática (3 intentos máximo).
+El agente está desplegado en Cloud Run y cuenta con un esqueleto en FastAPI preparado para integrar `google-adk`.
+
+### Despliegue Manual
+Puedes desplegar la última versión con un solo comando ejecutando el script (Tarea 1.7):
+```powershell
+.\deploy.ps1
+```
+
+### Automatización (Cloud Scheduler)
+El **Cloud Scheduler** está configurado para ejecutarse todos los días a las `23:59 CST`, enviando un POST al Cloud Run (`/api/cierre-diario`) para disparar el cierre del día, con política de reintentos automática (3 intentos máximo).
 ## Endpoints
+
+- `GET /` : Health check.
+- `POST /api/chat` : Endpoint de prueba ADK/Gemini. Recibe `{"message": "hola"}` y devuelve la respuesta del modelo.
+- `POST /api/cierre-diario` : Endpoint llamado por Cloud Scheduler.
 
 [PENDIENTE — 2.4, 2.8]
 
