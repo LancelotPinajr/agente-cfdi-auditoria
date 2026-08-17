@@ -15,6 +15,7 @@ from google.genai import types
 from pydantic import BaseModel
 
 from agente.agent import MODELO, root_agent
+from agente_cfdi.api.app import app as app_auditoria
 
 load_dotenv()
 
@@ -119,6 +120,20 @@ def cierre_diario():
     """Disparado por Cloud Scheduler (tarea 2.9)."""
     # TODO: Integrar lógica de auditoría y Merkle Tree (Gilfoyle Sprint 2)
     return {"status": "ok", "message": "Cierre diario ejecutado (simulado)"}
+
+
+# --- Motor de auditoría (tarea 1.13) ---
+# Hasta aquí este servicio era solo el agente: el motor verificable —lector de
+# CFDI, bitácora encadenada, Merkle, doble cesión— existía en `src/` con sus
+# pruebas y no estaba desplegado. Montarlo es lo que hace que la URL pública
+# haga lo que el proyecto promete.
+#
+# Se monta en `/auditoria` y no en `/api` a propósito: un `Mount` en `/api`
+# compite con `/api/chat` y `/api/cierre-diario`. Hoy los ganarían por orden de
+# registro, pero eso es depender del orden de las líneas de este archivo.
+#
+# El montaje va **al final**, después de las rutas propias, por la misma razón.
+app.mount("/auditoria", app_auditoria)
 
 
 if __name__ == "__main__":

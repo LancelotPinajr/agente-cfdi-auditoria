@@ -1,5 +1,23 @@
+# Versiones exactas de lo que se hornea en la imagen de Cloud Run.
+#
+# Reparto con `pyproject.toml`: allá se declara QUÉ necesita el paquete (rangos,
+# para que el CI pruebe contra versiones frescas); aquí se fija CUÁL versión
+# entra al contenedor, que es lo que un jurado puede reproducir.
+#
+# Regla que hay que sostener: este archivo tiene que ser **superconjunto** de las
+# dependencias de `pyproject.toml`. Cuando no lo fue, la imagen y el CI
+# instalaban conjuntos disjuntos y el hueco no se notaba porque cada mitad usaba
+# solo su lado.
 fastapi==0.141.1
 uvicorn==0.52.3
-google-genai==2.18.1
 google-adk==2.7.0
+google-genai==2.18.1
 python-dotenv==1.2.3
+
+# Las tres de abajo las necesita `agente_cfdi.api.app`, que desde la tarea 1.13
+# se monta dentro de este servicio. Sin `python-multipart` el endpoint
+# `/ingesta` —que recibe `UploadFile`— revienta **al importar el módulo**, no al
+# llamarlo: el contenedor no arrancaría.
+python-multipart==0.0.32
+pydantic==2.13.4
+httpx==0.28.1

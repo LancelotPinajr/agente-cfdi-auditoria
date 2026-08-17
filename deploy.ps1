@@ -25,12 +25,26 @@ Write-Host "============================================="
 # gcloud services enable artifactregistry.googleapis.com
 
 # Deploy usando source (Cloud Build compila el Dockerfile automáticamente)
+# --max-instances=1 NO es una optimizacion de costo: la bitacora es SQLite sobre
+# el disco efimero de la instancia (src/agente_cfdi/api/dependencias.py). Con dos
+# instancias vivas cada una escribiria su propia cadena y la punta se bifurcaria.
+# Es un parche honesto hasta que haya persistencia compartida, no la solucion.
+#
+# AGENTE_CFDI_BITACORA apunta a /tmp porque es el unico lugar que Cloud Run
+# garantiza escribible. Se pierde al reciclar la instancia: la cadena de esta
+# demo no sobrevive un despliegue, y eso se declara en la evidencia.
+#
+# AGENTE_CFDI_SEMILLA tiene que coincidir con la que usa tools/demo.py. Si no,
+# los libros sinteticos y los CFDI hablan de empresas distintas y TODO sale
+# sin_respaldo — pareceria que el auditor falla cuando en realidad se le esta
+# preguntando por facturas que nunca vio.
 gcloud run deploy $SERVICE_NAME `
     --source . `
     --project $PROJECT_ID `
     --region $REGION `
     --allow-unauthenticated `
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=global,GOOGLE_GENAI_USE_VERTEXAI=1"
+    --max-instances=1 `
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=global,GOOGLE_GENAI_USE_VERTEXAI=1,AGENTE_CFDI_BITACORA=/tmp/bitacora.db,AGENTE_CFDI_SEMILLA=20260814"
 
 if ($?) {
     Write-Host "`n✅ ¡Despliegue exitoso!"
