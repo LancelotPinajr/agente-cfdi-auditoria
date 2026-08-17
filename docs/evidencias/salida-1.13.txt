@@ -1,0 +1,43 @@
+﻿Fuente de libros : contabilidad sintética (semilla 20260814) — NO son libros reales
+Lote             : 41 CFDI, semilla 20260814
+Desviaciones plantadas: 2
+
+salud → {'estado': 'vivo', 'inquilino': 'DEMO000000XX0', 'altura': 0, 'punta': '2eb829f163a8672f2e37189d3e1aefd1a3a62d5ed297467facc48212c0848e39'}
+
+ingesta → auditados=40 rechazados=1 hallazgos=3
+  ✓ folio duplicado rechazado en la ingesta: el folio ya venía en este lote, en '9B3B23B3-C6D0-470D-8768-9299DA735895.xml'
+  ✓ el auditor encontró exactamente las 3 desviaciones esperadas
+    F92DE933… sin_respaldo: CFDI 496423.32 vs libros None
+    099FCC1A… monto_distinto: CFDI 463714.83 vs libros 463564.83
+    9B3B23B3… monto_distinto: CFDI 395375.95 vs libros 790751.90
+
+cesión a Banco Norte      → 201 cesion_registrada
+reintento de Banco Norte  → 200 repetida=True (un timeout de red no es fraude)
+cesión a Factor Sur       → 409 el folio fiscal ya fue cedido (previa en posición 40)
+
+cesión de un folio con hallazgo → sin_respaldo
+  advertencia: la contabilidad de la PYME no registra ingreso alguno que respalde este folio; la cesión se registró, pero el respaldo contable no existe
+
+anclaje del 2026-08-17 → 43 registros
+  raíz : f8c5e29d06b57c55c0fcd26e57c808d9d7c44e4a0e14f6b2e28af336c3160a31
+  red  : simulada:local
+  verificable por terceros: False
+
+prueba de 58665D2C… → 6 hashes para 43 registros del día
+  ✓ no expone ninguno de los otros 39 folios de la PYME
+
+--- verificador independiente sobre prueba_demo.json ---
+Folio            : 58665D2C-659B-4A47-B432-61CA2D9E157D
+Día              : 2026-08-17  (43 registros)
+Camino           : 6 hashes de hermanos
+
+Registro (canónico):
+  CORD-CANON-2|cfdi_auditado|evento|scfdi_auditado|inquilino|sDEMO000000XX0|escrito_en|t2026-08-17T20:57:59Z|uuid|s58665D2C-659B-4A47-B432-61CA2D9E157D|rfc_emisor|sSBZ000000171|rfc_receptor|sQTB0000006X4|total|d513508.83|moneda|sMXN|fecha_emision|s2026-08-13T01:09:14|veredicto|srespaldado|monto_en_libros|d513508.83|fuente_de_libros|scontabilidad sintética (semilla 20260814) — NO son libros reales
+
+✓ el contenido produce la hoja declarada  d7b9d4fc72bda950…
+✓ el camino lleva a la raíz declarada     f8c5e29d06b57c55…
+
+⚠ el ancla es SIMULADA (simulada:local).
+  No está publicada en ninguna red: no se puede comprobar fuera de su sistema.
+
+verificación de la cadena → {'integra': True, 'altura': 43, 'recalculados': 43, 'suprimidos_por_retencion': 0, 'punta': '23dc5e0f9b293bb13fc7cd01f8956e70943ee4a260604d0db2003447f5e69309'}
