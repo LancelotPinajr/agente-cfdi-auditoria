@@ -1,0 +1,31 @@
+# Secretos: nunca deben quedar horneados en una capa de la imagen.
+# En Cloud Run las variables llegan por entorno / Secret Manager, no por archivo.
+.env
+.envrc
+
+# Entorno local: además de pesar ~100 MB, está compilado para Windows y es
+# inservible dentro de la imagen Linux.
+.venv
+venv/
+env/
+
+# Historial y metadatos del repo
+.git
+.gitignore
+.github
+
+# Caches de Python
+__pycache__/
+*.py[codz]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Cosas que no corren en Cloud Run
+docs/
+deploy.ps1
+setup_sprint2.ps1
+generate_wallet.py
+smoke_test*.py
+LICENSE
+README.md
