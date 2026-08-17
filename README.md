@@ -65,13 +65,13 @@ Debe imprimir `ok`.
 | Variable | Descripción |
 |---|---|
 | `GOOGLE_API_KEY` | Key de Google AI Studio |
-| `GOOGLE_CLOUD_PROJECT` | [PENDIENTE] |
-| `GOOGLE_CLOUD_REGION` | [PENDIENTE] |
+| `GOOGLE_CLOUD_PROJECT` | `project-d0428141-1b39-47af-9bc` |
+| `GOOGLE_CLOUD_REGION` | `us-central1` |
+| `WALLET_PRIVATE_KEY` | Llave privada EVM (consumida vía Secret Manager) |
 
 ## Despliegue
-
-[PENDIENTE — 1.5]
-
+El agente estará desplegado en Cloud Run.
+El **Cloud Scheduler** está configurado para ejecutarse todos los días a las `23:59 CST`, enviando un POST al Cloud Run para disparar el cierre del día, con política de reintentos automática (3 intentos máximo).
 ## Endpoints
 
 [PENDIENTE — 2.4, 2.8]
