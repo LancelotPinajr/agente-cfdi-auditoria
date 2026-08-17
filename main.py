@@ -1,67 +1,127 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+"""Transporte HTTP del agente (Cloud Run).
+
+Este archivo no contiene lógica de agente: la ejecución la lleva el `Runner` de
+ADK sobre el `root_agent` definido en `agente/agent.py`.
+"""
+
 import os
-from google import genai
+import uuid
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.genai import types
+from pydantic import BaseModel
+
+from agente.agent import MODELO, root_agent
+
+load_dotenv()
+
+APP_NAME = "agente-cfdi"
+
+# --- Selección de backend: Gemini API o Vertex AI ---
+# Orden de precedencia, de mayor a menor:
+#   1. GOOGLE_GENAI_USE_VERTEXAI explícita — manda siempre.
+#   2. GOOGLE_API_KEY presente — se usa Gemini API.
+#   3. Nada de lo anterior — Vertex AI con Application Default Credentials,
+#      que es como corre en Cloud Run.
+#
+# El paso 1 existe porque `load_dotenv()` reinyecta lo que haya en `.env`: sin
+# una palanca explícita, una key muerta en ese archivo secuestra el arranque y
+# no hay manera de forzar Vertex sin editarlo.
+if "GOOGLE_GENAI_USE_VERTEXAI" not in os.environ and not os.environ.get(
+    "GOOGLE_API_KEY"
+):
+    os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "1"
+
+if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in ("1", "true"):
+    # El README documenta GOOGLE_CLOUD_REGION, pero google-genai lee
+    # GOOGLE_CLOUD_LOCATION. Se acepta la primera y se traduce.
+    #
+    # El default es "global" y no "us-central1": verificado el 16-ago-2026 que
+    # gemini-3.5-flash NO está publicado en us-central1 (devuelve 404) y sí en
+    # global. us-central1 es la región del despliegue de Cloud Run, que es otra
+    # cosa; confundirlas rompe el arranque.
+    if not os.environ.get("GOOGLE_CLOUD_LOCATION"):
+        os.environ["GOOGLE_CLOUD_LOCATION"] = os.environ.get(
+            "GOOGLE_CLOUD_REGION", "global"
+        )
 
 app = FastAPI(title="Agente CFDI Auditoría")
 
-# --- Configuración Gemini ---
-# Prioriza Variable de Entorno, luego usa los defaults
-PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "project-d0428141-1b39-47af-9bc")
-LOCATION = os.environ.get("GOOGLE_CLOUD_REGION", "global")
+# La sesión en memoria se pierde al reciclar la instancia de Cloud Run. Es
+# suficiente para el esqueleto; el estado que importa vive en la bitácora
+# encadenada, no aquí.
+session_service = InMemorySessionService()
 
-# Inicializamos el cliente. Si estamos en local sin GOOGLE_API_KEY, 
-# se usará Vertex AI vía Application Default Credentials
-try:
-    if "GOOGLE_API_KEY" in os.environ:
-        client = genai.Client()
-    else:
-        client = genai.Client(
-            vertexai=True,
-            project=PROJECT_ID,
-            location=LOCATION
-        )
-except Exception as e:
-    print(f"Error inicializando genai.Client: {e}")
-    client = None
+runner = Runner(
+    app_name=APP_NAME,
+    agent=root_agent,
+    session_service=session_service,
+    auto_create_session=True,
+)
 
-# Modelos a usar en FastAPI
+
 class ChatRequest(BaseModel):
     message: str
+    session_id: str | None = None
+    user_id: str = "anonimo"
+
 
 class ChatResponse(BaseModel):
     reply: str
+    session_id: str
+    model: str
+
 
 @app.get("/")
 def read_root():
-    """Health check básico para Cloud Run"""
-    return {"status": "ok", "service": "agente-cfdi"}
+    """Health check para Cloud Run."""
+    return {
+        "status": "ok",
+        "service": APP_NAME,
+        "framework": "google-adk",
+        "model": MODELO,
+    }
+
 
 @app.post("/api/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
-    """
-    Endpoint de prueba para verificar Gemini (ADK esqueleto)
-    """
-    if not client:
-        raise HTTPException(status_code=500, detail="Cliente Gemini no inicializado")
-    
+async def chat(request: ChatRequest):
+    """Ejecuta un turno del agente ADK."""
+    session_id = request.session_id or str(uuid.uuid4())
+    mensaje = types.Content(role="user", parts=[types.Part(text=request.message)])
+
+    partes: list[str] = []
     try:
-        resp = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=request.message,
-        )
-        return ChatResponse(reply=resp.text)
+        async for event in runner.run_async(
+            user_id=request.user_id,
+            session_id=session_id,
+            new_message=mensaje,
+        ):
+            if event.is_final_response() and event.content and event.content.parts:
+                partes = [p.text for p in event.content.parts if p.text]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+    if not partes:
+        raise HTTPException(
+            status_code=502, detail="El agente no devolvió una respuesta final"
+        )
+
+    return ChatResponse(
+        reply="".join(partes), session_id=session_id, model=MODELO
+    )
+
+
 @app.post("/api/cierre-diario")
 def cierre_diario():
-    """
-    Este endpoint será llamado por el Cloud Scheduler (Tarea 2.9)
-    """
+    """Disparado por Cloud Scheduler (tarea 2.9)."""
     # TODO: Integrar lógica de auditoría y Merkle Tree (Gilfoyle Sprint 2)
     return {"status": "ok", "message": "Cierre diario ejecutado (simulado)"}
 
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
