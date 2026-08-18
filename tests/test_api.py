@@ -653,3 +653,100 @@ def test_el_verificador_independiente_rechaza_una_prueba_manipulada(cliente, lot
     )
     assert salida.returncode == 1
     assert "NO produce la hoja declarada" in salida.stdout
+
+
+# --------------------------------------------------------------------------- #
+# Cierre diario (tarea 2.9)
+# --------------------------------------------------------------------------- #
+
+
+def test_el_cierre_ancla_el_dia(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cuerpo = cliente.post("/cierre-diario").json()
+
+    assert cuerpo["estado"] == "anclado"
+    assert cuerpo["registros_del_dia"] == 6
+    assert cuerpo["verificados"] == 6
+    assert len(cuerpo["raiz"]) == 64
+    assert cuerpo["ancla"]["referencia"]
+
+
+def test_un_dia_sin_movimientos_no_es_un_fallo(cliente):
+    """El job corre todos los días, haya o no facturas.
+
+    Si un domingo tranquilo devolviera error, el scheduler lo marcaría como
+    fallo y el tablero mostraría rojo por algo que salió bien.
+    """
+    respuesta = cliente.post("/cierre-diario")
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.json()
+    assert cuerpo["estado"] == "sin_movimientos"
+    assert cuerpo["registros_del_dia"] == 0
+    assert cuerpo["ancla"] is None
+
+
+def test_el_cierre_repetido_no_produce_una_segunda_raiz(cliente, lote):
+    """Un reintento del scheduler no debe dejar dos raíces «oficiales»."""
+    cliente.post("/ingesta", files=archivos_de(lote, 3))
+    primero = cliente.post("/cierre-diario").json()
+
+    cliente.post("/ingesta", files=archivos_de(lote, 3))  # entran más registros
+    segundo = cliente.post("/cierre-diario").json()
+
+    assert segundo["estado"] == "ya_estaba_anclado"
+    assert segundo["raiz"] == primero["raiz"]
+    assert segundo["ancla"]["referencia"] == primero["ancla"]["referencia"]
+
+
+def test_una_cadena_rota_no_se_ancla(cliente, lote, tmp_path):
+    """Publicar la raíz de una cadena manipulada es peor que no publicar nada.
+
+    Dejaría constancia permanente de datos corruptos y le daría al financiador
+    una garantía falsa.
+    """
+    import sqlite3
+
+    cliente.post("/ingesta", files=archivos_de(lote, 4))
+
+    conexion = sqlite3.connect(tmp_path / "bitacora.db")
+    conexion.execute(
+        "UPDATE bitacora_registros SET canonico = ? WHERE posicion = 2",
+        (b"esto no es lo que se firmo",),
+    )
+    conexion.commit()
+    conexion.close()
+
+    respuesta = cliente.post("/cierre-diario")
+
+    assert respuesta.status_code == 500
+    cuerpo = respuesta.json()
+    assert cuerpo["estado"] == "cadena_rota"
+    assert "posición 2" in cuerpo["detalle"]
+    assert cuerpo["raiz"] is None
+    assert cuerpo["ancla"] is None
+
+
+def test_la_cadena_rota_se_detecta_antes_de_anclar(cliente, lote, tmp_path):
+    """Y no queda ancla del día: no se publicó nada."""
+    import sqlite3
+
+    cliente.post("/ingesta", files=archivos_de(lote, 4))
+    conexion = sqlite3.connect(tmp_path / "bitacora.db")
+    conexion.execute(
+        "UPDATE bitacora_registros SET canonico = ? WHERE posicion = 1", (b"alterado",)
+    )
+    conexion.commit()
+    conexion.close()
+
+    cliente.post("/cierre-diario")
+
+    assert cliente.get(f"/auditoria/prueba/{lote.comprobantes[0].uuid}").json()["ancla"] is None
+
+
+def test_el_cierre_declara_que_el_ancla_es_simulada(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote, 2))
+    cuerpo = cliente.post("/cierre-diario").json()
+
+    assert cuerpo["ancla"]["verificable_por_terceros"] is False
+    assert "ANCLA SIMULADA" in cuerpo["detalle"]

@@ -8,7 +8,7 @@ import os
 import uuid
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
@@ -16,6 +16,11 @@ from pydantic import BaseModel
 
 from agente.agent import MODELO, root_agent
 from agente_cfdi.api.app import app as app_auditoria
+from agente_cfdi.api.app import cierre_diario as cierre_del_motor
+from agente_cfdi.api.dependencias import ancla_actual, bitacora_actual
+from agente_cfdi.api.esquemas import RespuestaDeCierre
+from agente_cfdi.bitacora.almacen import Bitacora
+from agente_cfdi.bitacora.anclaje import Ancla
 
 load_dotenv()
 
@@ -115,11 +120,26 @@ async def chat(request: ChatRequest):
     )
 
 
-@app.post("/api/cierre-diario")
-def cierre_diario():
-    """Disparado por Cloud Scheduler (tarea 2.9)."""
-    # TODO: Integrar lógica de auditoría y Merkle Tree (Gilfoyle Sprint 2)
-    return {"status": "ok", "message": "Cierre diario ejecutado (simulado)"}
+@app.post("/api/cierre-diario", response_model=RespuestaDeCierre)
+def cierre_diario(
+    dia: str | None = None,
+    respuesta: Response = None,  # type: ignore[assignment]
+    bitacora: Bitacora = Depends(bitacora_actual),
+    ancla: Ancla = Depends(ancla_actual),
+) -> RespuestaDeCierre:
+    """Disparado por Cloud Scheduler (tarea 2.9).
+
+    Hasta el 18-ago esto devolvía `«Cierre diario ejecutado (simulado)»` y no
+    cerraba nada: el scheduler corría a diario contra un stub y el tablero decía
+    verde. Ahora delega en el motor de auditoría, que desde la tarea 1.13 vive en
+    este mismo proceso.
+
+    **La lógica no está aquí a propósito.** Vive en `agente_cfdi.api.app`, donde
+    la cubren las pruebas: este archivo importa ADK, que el CI no instala, así
+    que cualquier regla escrita aquí quedaría sin probar. Este endpoint solo
+    conserva la ruta que el scheduler ya conoce.
+    """
+    return cierre_del_motor(dia=dia, respuesta=respuesta, bitacora=bitacora, ancla=ancla)
 
 
 # --- Motor de auditoría (tarea 1.13) ---

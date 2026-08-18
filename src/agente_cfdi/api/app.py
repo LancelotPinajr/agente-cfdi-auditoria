@@ -38,6 +38,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile, statu
 from ..auditoria.cotejo import cotejar_lote
 from ..bitacora.almacen import Bitacora
 from ..bitacora.anclaje import Ancla, ErrorDeAnclaje
+from ..bitacora.cadena import CadenaRota
 from ..cfdi.errores import CFDIInvalido
 from ..cfdi.lector import leer_cfdi
 from ..fuentes.protocolo import ErrorDeFuente, FuenteDeLibros
@@ -52,6 +53,7 @@ from .esquemas import (
     RegistroAuditado,
     RespuestaDeAnclaje,
     RespuestaDeCesion,
+    RespuestaDeCierre,
     RespuestaDeIngesta,
 )
 
@@ -446,4 +448,94 @@ def prueba_de_integridad(
         ),
         verificable_por_terceros=prueba.verificable_por_terceros,
         advertencia=advertencia,
+    )
+
+
+@app.post("/cierre-diario", response_model=RespuestaDeCierre)
+def cierre_diario(
+    dia: str | None = None,
+    respuesta: Response = None,  # type: ignore[assignment]
+    bitacora: Bitacora = Depends(bitacora_actual),
+    ancla: Ancla = Depends(ancla_actual),
+) -> RespuestaDeCierre:
+    """Cierra el día: verifica la cadena, arma el árbol y ancla la raíz (tarea 2.9).
+
+    Lo dispara Cloud Scheduler. Eso cambia tres cosas frente al endpoint manual
+    de `/bitacora/anclaje`:
+
+    **Un día sin movimientos NO es un error.** El job corre todos los días, haya
+    o no habido facturas. Si un domingo tranquilo devolviera `409`, el scheduler
+    lo marcaría como fallo, reintentaría, y el tablero mostraría rojo por algo
+    que salió bien. Se responde `200` con `estado: sin_movimientos`.
+
+    **La cadena se verifica ANTES de anclar.** Publicar la raíz de una cadena
+    manipulada sería peor que no publicar nada: dejaría constancia permanente de
+    unos datos corruptos y le daría al financiador una garantía falsa. Si la
+    cadena está rota no se ancla, y el job falla ruidosamente — un reintento no
+    lo va a arreglar, pero nadie debería enterarse por casualidad.
+
+    **Anclar dos veces el mismo día es inocuo.** Un reintento del scheduler
+    devuelve la constancia original en vez de una segunda raíz «oficial».
+    """
+    objetivo = dia or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    altura = bitacora.altura()
+
+    try:
+        verificados = bitacora.verificar()
+    except CadenaRota as rota:
+        # No se ancla. Y se responde 500 a propósito: para el scheduler esto
+        # tiene que verse rojo, no como un cierre más.
+        respuesta.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        return RespuestaDeCierre(
+            estado="cadena_rota",
+            dia=objetivo,
+            registros_del_dia=0,
+            altura=altura,
+            verificados=0,
+            detalle=(
+                f"la cadena se rompe en la posición {rota.posicion}: {rota.detalle}. "
+                f"No se ancló: publicar la raíz de una cadena manipulada dejaría "
+                f"constancia permanente de datos corruptos."
+            ),
+        )
+
+    hojas = bitacora.hojas_del_dia(objetivo)
+    if not hojas:
+        return RespuestaDeCierre(
+            estado="sin_movimientos",
+            dia=objetivo,
+            registros_del_dia=0,
+            altura=altura,
+            verificados=verificados,
+            detalle=f"{objetivo} no tuvo registros; no hay raíz que anclar",
+        )
+
+    ya_estaba = bitacora.ancla_del_dia(objetivo) is not None
+    try:
+        constancia = bitacora.anclar_dia(objetivo, ancla)
+    except ErrorDeAnclaje as falla:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"no se pudo anclar {objetivo}: {falla}",
+        ) from falla
+
+    fila = bitacora.ancla_del_dia(objetivo)
+    return RespuestaDeCierre(
+        estado="ya_estaba_anclado" if ya_estaba else "anclado",
+        dia=objetivo,
+        registros_del_dia=int(fila["registros"]),
+        altura=altura,
+        verificados=verificados,
+        raiz=bytes(fila["raiz"]).hex(),
+        ancla=ConstanciaDeAnclaje(
+            red=constancia.red,
+            referencia=constancia.referencia,
+            anclado_en=fila["anclado_en"],
+            verificable_por_terceros=constancia.verificable_por_terceros,
+        ),
+        detalle=(
+            f"{len(hojas)} registros del día bajo una raíz; cadena verificada "
+            f"en sus {verificados} eslabones recalculables"
+            + ("" if constancia.verificable_por_terceros else " · ANCLA SIMULADA")
+        ),
     )

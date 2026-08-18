@@ -187,3 +187,22 @@ class PruebaDeIntegridad(BaseModel):
     ancla: ConstanciaDeAnclaje | None
     verificable_por_terceros: bool
     advertencia: str | None = None
+
+
+class RespuestaDeCierre(BaseModel):
+    """El resultado del cierre del día (tarea 2.9).
+
+    Lo consume Cloud Scheduler, no una persona, así que `estado` es una palabra
+    fija y no un texto libre: un job que reporta prosa no se puede vigilar.
+    """
+
+    estado: str
+    """`anclado`, `ya_estaba_anclado`, `sin_movimientos` o `cadena_rota`."""
+
+    dia: str
+    registros_del_dia: int
+    altura: int
+    verificados: int
+    raiz: str | None = None
+    ancla: ConstanciaDeAnclaje | None = None
+    detalle: str
