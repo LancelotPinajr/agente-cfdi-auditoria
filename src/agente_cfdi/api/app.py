@@ -37,7 +37,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response, UploadFile, statu
 
 from ..auditoria.cotejo import cotejar_lote
 from ..bitacora.almacen import Bitacora
-from ..bitacora.anclaje import Ancla, ErrorDeAnclaje
+from ..bitacora.anclaje import Ancla, Constancia, ErrorDeAnclaje, enlace_del_explorador
 from ..bitacora.cadena import CadenaRota
 from ..cfdi.errores import CFDIInvalido
 from ..cfdi.lector import leer_cfdi
@@ -55,6 +55,7 @@ from .esquemas import (
     RespuestaDeCesion,
     RespuestaDeCierre,
     RespuestaDeIngesta,
+    Semaforo,
 )
 
 MAXIMO_ARCHIVOS = 500
@@ -538,4 +539,93 @@ def cierre_diario(
             f"en sus {verificados} eslabones recalculables"
             + ("" if constancia.verificable_por_terceros else " · ANCLA SIMULADA")
         ),
+    )
+
+
+@app.get("/semaforo", response_model=Semaforo)
+def semaforo(
+    dia: str | None = None, bitacora: Bitacora = Depends(bitacora_actual)
+) -> Semaforo:
+    """El estado de integridad de un vistazo (tarea 3.11).
+
+    Recorre la cadena entera y reporta un color. Es caro a propósito: quien mira
+    el semáforo quiere la respuesta de verdad, no una caché. La sonda barata para
+    Cloud Run es `/salud`, que no verifica nada.
+    """
+    objetivo = dia or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    altura = bitacora.altura()
+
+    try:
+        verificados = bitacora.verificar()
+    except CadenaRota as rota:
+        return Semaforo(
+            color="rojo",
+            titulo="MANIPULACIÓN DETECTADA",
+            detalle=(
+                f"la cadena se rompe en la posición {rota.posicion}: {rota.detalle}"
+            ),
+            altura=altura,
+            verificados=0,
+            posicion_del_problema=rota.posicion,
+            dia=objetivo,
+        )
+
+    fila = bitacora.ancla_del_dia(objetivo)
+    if fila is None:
+        return Semaforo(
+            color="ambar",
+            titulo="ÍNTEGRA, SIN PUBLICAR",
+            detalle=(
+                f"los {verificados} eslabones recalculables cuadran, pero el {objetivo} "
+                f"todavía no se ancla: por ahora esto solo demuestra que nuestra "
+                f"bitácora es consistente consigo misma"
+            ),
+            altura=altura,
+            verificados=verificados,
+            dia=objetivo,
+        )
+
+    constancia = Constancia(
+        red=fila["red"],
+        referencia=fila["referencia"],
+        anclado_en=datetime.fromisoformat(fila["anclado_en"].replace("Z", "+00:00")),
+    )
+    enlace = enlace_del_explorador(constancia)
+    resumen = ConstanciaDeAnclaje(
+        red=constancia.red,
+        referencia=constancia.referencia,
+        anclado_en=fila["anclado_en"],
+        verificable_por_terceros=constancia.verificable_por_terceros,
+    )
+
+    if not constancia.verificable_por_terceros:
+        return Semaforo(
+            color="ambar",
+            titulo="ÍNTEGRA, ANCLA SIMULADA",
+            detalle=(
+                f"los {verificados} eslabones recalculables cuadran y la raíz del "
+                f"{objetivo} está sellada, pero en un ancla SIMULADA "
+                f"({constancia.red}): no hay nada publicado que un tercero pueda "
+                f"consultar sin nosotros"
+            ),
+            altura=altura,
+            verificados=verificados,
+            dia=objetivo,
+            ancla=resumen,
+            enlace_al_explorador=enlace,
+        )
+
+    return Semaforo(
+        color="verde",
+        titulo="CADENA ÍNTEGRA Y PUBLICADA",
+        detalle=(
+            f"los {verificados} eslabones recalculables cuadran y la raíz del "
+            f"{objetivo} está publicada en {constancia.red}; cualquiera puede "
+            f"comprobarla sin pedirnos nada"
+        ),
+        altura=altura,
+        verificados=verificados,
+        dia=objetivo,
+        ancla=resumen,
+        enlace_al_explorador=enlace,
     )

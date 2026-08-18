@@ -206,3 +206,36 @@ class RespuestaDeCierre(BaseModel):
     raiz: str | None = None
     ancla: ConstanciaDeAnclaje | None = None
     detalle: str
+
+
+class Semaforo(BaseModel):
+    """El estado de integridad de un vistazo (tarea 3.11).
+
+    ## Por qué son tres colores y no dos
+
+    El plan pedía verde «cadena íntegra» / rojo «manipulación detectada». Faltaba
+    un estado, y es justo el que tenemos hoy: **la cadena está íntegra pero nadie
+    de fuera puede comprobarlo**, porque el ancla es simulada.
+
+    Pintarlo verde sería mentir en el lugar más visible del producto: un color
+    verde dice «esto está comprobado» y aquí lo único comprobado es que nuestra
+    bitácora es consistente consigo misma. Pintarlo rojo sería peor —no hay
+    manipulación— y volvería inútil la única señal de alarma.
+
+    Por eso el verde exige **las dos cosas**: cadena íntegra Y raíz publicada en
+    una red real. El día que el anclaje deje de ser simulado, esto se pone verde
+    solo, sin tocar una línea.
+    """
+
+    color: str
+    """`verde`, `ambar` o `rojo`."""
+
+    titulo: str
+    detalle: str
+    altura: int
+    verificados: int
+    posicion_del_problema: int | None = None
+    dia: str | None = None
+    ancla: ConstanciaDeAnclaje | None = None
+    enlace_al_explorador: str | None = None
+    """`None` cuando no hay dónde comprobarlo. No se inventa una URL."""

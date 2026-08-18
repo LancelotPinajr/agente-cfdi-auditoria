@@ -239,7 +239,10 @@ sequenceDiagram
 
     Note over S: 23:59 America/Mexico_City = 05:59 UTC
     S->>R: POST /api/cierre-diario · sin OIDC
-    R-->>S: 200 {"message": "Cierre diario ejecutado (simulado)"}
+    R->>R: verificar_cadena() — ANTES de anclar
+    R->>R: raiz_de_merkle(hojas del día)
+    R->>R: anclar_dia() — idempotente
+    R-->>S: 200 {"estado": "anclado", "raiz": "..."}
     S->>L: AttemptStarted + AttemptFinished 200
     R->>L: httpRequest 200 · 6.5 s de arranque en frío
 ```
@@ -248,12 +251,23 @@ Corrió por primera vez el 17-ago-2026 a las 05:59:00 UTC, sin consumir ninguno
 de sus 3 reintentos. La evidencia completa está en
 [`docs/evidencias/2026-08-17-job-diario.md`](evidencias/2026-08-17-job-diario.md).
 
-**Lo que esto prueba es la plomería, no el cierre.** `main.py` devuelve un
-literal con un `TODO` encima: no calcula Merkle, no ancla, no toca la bitácora.
+**Cerrado el 18-ago-2026.** Hasta entonces `main.py` devolvía un literal con un
+`TODO` encima: no calculaba Merkle, no anclaba, no tocaba la bitácora. El job
+llevaba días corriendo contra un stub y el tablero decía verde.
 
-Desde 1.13 el motor que sabría hacerlo corre **en el mismo proceso**, a un
-`import` de distancia: `POST /auditoria/bitacora/anclaje` hace exactamente lo que
-el job debería disparar. Lo que falta es llamarlo, y es una tarea de horas.
+Ahora `/api/cierre-diario` delega en `agente_cfdi.api.app.cierre_diario`. La
+lógica **no vive en `main.py`** a propósito: ese archivo importa ADK, que el CI
+no instala, así que cualquier regla escrita ahí quedaría sin prueba.
+
+Tres reglas que salen de que lo dispara una máquina y no una persona:
+
+| Situación | Respuesta | Por qué |
+|---|---|---|
+| Día sin movimientos | `200 · sin_movimientos` | El job corre a diario haya o no facturas. Un `409` haría que el scheduler marcara fallo y reintentara por algo que salió bien |
+| Cadena rota | `500 · cadena_rota`, **no ancla** | Publicar la raíz de una cadena manipulada dejaría constancia permanente de datos corruptos. Un reintento no lo arregla, pero nadie debe enterarse por casualidad |
+| Segundo disparo del día | `200 · ya_estaba_anclado` | Un reintento no debe dejar dos raíces «oficiales»; un tercero no sabría cuál creer |
+
+La verificación va **antes** del anclaje, no después. Es el orden que importa.
 
 ### 3.4 Una auditoría de punta a punta
 
@@ -289,6 +303,51 @@ por el LLM.
 
 Medido el 17-ago-2026 contra la nube: 40 comprobantes leídos, auditados y
 encadenados en **52 ms**.
+
+### 3.5 El semáforo de integridad y el escenario de manipulación
+
+`GET /auditoria/semaforo` recorre la cadena entera y devuelve un color. Es caro a
+propósito: quien lo mira quiere la respuesta de verdad, no una caché. La sonda
+barata para Cloud Run sigue siendo `/auditoria/salud`, que no verifica nada.
+
+| Color | Cuándo | Qué significa |
+|---|---|---|
+| 🔴 `rojo` | La cadena no recalcula | Manipulación detectada. Nombra la **fila exacta** |
+| 🟡 `ambar` | Íntegra, sin publicar o con ancla simulada | Nuestra bitácora es consistente **consigo misma**, que es justo lo que un tercero no tiene por qué creernos |
+| 🟢 `verde` | Íntegra **y** anclada en una red real | Cualquiera puede comprobarlo sin pedirnos nada |
+
+**El plan pedía dos colores; hay tres, y el que se añadió es el que describe el
+estado de hoy.** Con el ancla simulada el semáforo nunca llega a verde. Pintarlo
+verde sería mentir en el lugar más visible del producto: un verde dice «esto está
+comprobado», y aquí lo único comprobado es la consistencia interna. Pintarlo rojo
+sería peor —no hay manipulación— y volvería inútil la única señal de alarma.
+
+El día que el anclaje deje de ser simulado, esto se pone verde solo. Hay una
+prueba que lo fija sustituyendo el ancla por una de red real.
+
+El enlace al explorador se construye solo para redes conocidas
+(`base`, `base-sepolia`, `polygon`, `polygon-amoy`). Para el resto se devuelve
+`null`: sin enlace, «la raíz está anclada» es una afirmación que hay que
+creernos, y no se inventa una URL para disimularlo.
+
+#### El escenario reproducible
+
+[`tools/escenario_manipulacion.py`](../tools/escenario_manipulacion.py) corre la
+demostración completa: audita un lote, cierra el día, **altera un monto
+directamente en SQLite** —saltándose la API— y comprueba que el semáforo se pone
+rojo, nombra la fila y el cierre se niega a anclar.
+
+Se manipula la base y no la API a propósito: la API es append-only y no tiene
+endpoint para editar un registro pasado, así que «atacarla» por ahí no probaría
+nada. El escenario interesante es el del insider con acceso a la base, que es el
+que una bitácora encadenada existe para cubrir.
+
+**Lo que el escenario no prueba:** que nadie pueda reescribir la cadena *entera*.
+Quien tenga acceso a la base puede alterar un registro y recalcular todos los
+hashes posteriores; saldría íntegra. Eso lo cubre el anclaje —la raíz publicada
+no cambia— y por eso el semáforo separa «íntegra» de «íntegra y publicada». Con
+el ancla simulada esa segunda mitad todavía no está, y conviene decirlo en el
+video antes de que lo pregunte un jurado.
 
 ---
 
@@ -611,7 +670,7 @@ repositorio.
 | 1 | **Anclaje simulado** | Sin él la cadena solo prueba consistencia interna, que es circular | ADR 0006 |
 | 2 | **Servicio público sin autenticación** | Cualquiera escribe en la bitácora, dispara el cierre y consume cuota de Vertex | §7.2 |
 | 3 | **Persistencia efímera** | La cadena vive en `/tmp` y muere con la instancia; `maxScale: 1` evita la bifurcación a costa de no escalar | §6 |
-| 4 | **`/api/cierre-diario` es un stub** | El job corre a diario y no cierra nada, teniendo el motor en el mismo proceso | §3.3 |
+| 4 | ~~`/api/cierre-diario` es un stub~~ | **Cerrada el 18-ago-2026** — ver §3.3 | §3.3 |
 | 5 | **Cero alertas** | Una falla silenciosa se descubre por casualidad | tarea 2.11 |
 | 6 | **El agente no tiene herramientas** | El LLM no puede consultar la bitácora que el proyecto construyó | `agent.py:45` |
 | 7 | **Sin autenticación por financiador** | IAM protege el perímetro, no distingue a un financiador de otro | `app.py:11` |
@@ -619,6 +678,11 @@ repositorio.
 
 **Cerradas el 17-ago-2026:** «la auditoría no está desplegada» (tarea 1.13, §1) y
 «dependencias divergentes» (§4). Eran las dos primeras de la lista anterior.
+
+**Cerrada el 18-ago-2026:** «`/api/cierre-diario` es un stub» (#4). El cierre
+ahora verifica, arma el árbol y ancla de verdad — ver §3.3. Con eso la ejecución
+autónoma deja de tener un hueco en el último paso, que era el que más pesaba: es
+el 40% de la calificación.
 
 El orden cambió y conviene decir por qué. Antes encabezaba el despliegue; ahora
 encabeza el **anclaje**, porque es lo único que separa «nuestra bitácora es
