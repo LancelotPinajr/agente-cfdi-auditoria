@@ -349,6 +349,61 @@ no cambia— y por eso el semáforo separa «íntegra» de «íntegra y publicad
 el ancla simulada esa segunda mitad todavía no está, y conviene decirlo en el
 video antes de que lo pregunte un jurado.
 
+### 3.6 Las herramientas del agente
+
+Hasta el 18-ago-2026 el agente tenía `tools=[]`: en un hackathon de agentes, el
+LLM no alcanzaba el producto que el proyecto construyó. Ahora tiene tres.
+
+| Herramienta | Para qué |
+|---|---|
+| `estado_de_integridad()` | El semáforo, con su color y el porqué |
+| `consultar_folio(uuid)` | ¿Auditado? ¿Qué veredicto? ¿Ya cedido? |
+| `resumen_de_la_bitacora()` | Altura de la cadena y si el día se cerró |
+
+#### Las tres son de solo lectura, y es la decisión que más importa
+
+El agente **no puede** ingestar, ceder ni cerrar el día. Esas tres escriben en
+una bitácora append-only, donde un registro mal escrito no se corrige después —
+porque el diseño entero existe para que nada se pueda corregir después.
+
+Que un LLM alucine una llamada a herramienta es un hecho conocido, no un riesgo
+hipotético. Si esa llamada pudiera anexar una auditoría, bastaría **una** para
+dejar un veredicto falso, firmado y permanente en la cadena que este producto
+vende como confiable. Y si pudiera ceder, alucinar un financiador consumiría el
+folio para siempre: la restricción `UNIQUE` que impide el fraude impediría
+también corregir el error.
+
+Escribir se queda en los endpoints deterministas. El agente lee, explica y cita.
+Hay una prueba que recorre todas las herramientas y verifica que la altura y la
+punta de la cadena no se movieron, y otra que falla si alguien añade una
+herramienta cuyo nombre sugiera escritura.
+
+#### Tampoco filtran el financiador
+
+`GET /cesiones/{uuid}` ya ocultaba a nombre de quién está una cesión: que el
+folio esté tomado basta para frenar una operación, la identidad del otro es
+información comercial de un tercero. La regla se repite en las herramientas
+porque, sin ella, el agente sería el camino fácil para sacar justo lo que el
+endpoint protege.
+
+#### Dónde vive el código, y por qué importa
+
+Las funciones están en `src/agente_cfdi/agente/herramientas.py` y **no importan
+ADK**. `agente/agent.py` solo las pasa en `tools=[...]`.
+
+El motivo es el mismo que en §3.3: `agent.py` importa ADK, que el CI no instala
+para el grueso de las pruebas, así que la lógica escrita ahí quedaría sin
+cubrir. Con la separación, las 13 pruebas de las herramientas corren en cada
+push.
+
+Eso dejaba un hueco propio —**que ADK las acepte no lo probaba nadie**— y es la
+misma forma del bug de `python-multipart`: algo que funciona donde se escribió y
+no donde corre. Lo cubre el trabajo `agente` del CI, que instala el extra
+`.[agente]` y ejecuta
+[`tools/verificar_agente.py`](../tools/verificar_agente.py): fuerza la
+conversión a `FunctionTool`, que es donde ADK deriva el esquema desde los tipos
+y el docstring. Si eso pasa, el contenedor arranca.
+
 ---
 
 ## 4. Anatomía del repositorio
@@ -672,17 +727,21 @@ repositorio.
 | 3 | **Persistencia efímera** | La cadena vive en `/tmp` y muere con la instancia; `maxScale: 1` evita la bifurcación a costa de no escalar | §6 |
 | 4 | ~~`/api/cierre-diario` es un stub~~ | **Cerrada el 18-ago-2026** — ver §3.3 | §3.3 |
 | 5 | **Cero alertas** | Una falla silenciosa se descubre por casualidad | tarea 2.11 |
-| 6 | **El agente no tiene herramientas** | El LLM no puede consultar la bitácora que el proyecto construyó | `agent.py:45` |
+| 6 | ~~El agente no tiene herramientas~~ | **Cerrada el 18-ago-2026** — tres herramientas de solo lectura; ver §3.6 | §3.6 |
 | 7 | **Sin autenticación por financiador** | IAM protege el perímetro, no distingue a un financiador de otro | `app.py:11` |
 | 8 | **Build y runtime comparten SA** | Comprometer el contenedor da permiso de publicar imágenes | §7.1 |
 
 **Cerradas el 17-ago-2026:** «la auditoría no está desplegada» (tarea 1.13, §1) y
 «dependencias divergentes» (§4). Eran las dos primeras de la lista anterior.
 
-**Cerrada el 18-ago-2026:** «`/api/cierre-diario` es un stub» (#4). El cierre
-ahora verifica, arma el árbol y ancla de verdad — ver §3.3. Con eso la ejecución
-autónoma deja de tener un hueco en el último paso, que era el que más pesaba: es
-el 40% de la calificación.
+**Cerradas el 18-ago-2026:** «`/api/cierre-diario` es un stub» (#4) y «el agente
+no tiene herramientas» (#6). El cierre ahora verifica, arma el árbol y ancla de
+verdad (§3.3), y el agente puede consultar la bitácora (§3.6). Con lo primero la
+ejecución autónoma deja de tener un hueco en el último paso, que era el que más
+pesaba: es el 40% de la calificación.
+
+La #1 sigue encabezando, y ahora con una consecuencia visible: **el semáforo no
+llega a verde** mientras el ancla sea simulada.
 
 El orden cambió y conviene decir por qué. Antes encabezaba el despliegue; ahora
 encabeza el **anclaje**, porque es lo único que separa «nuestra bitácora es

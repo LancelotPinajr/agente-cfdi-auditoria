@@ -28,6 +28,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+# ADK y su acompañante. Van aparte porque el grueso de las pruebas NO los
+# necesita: las herramientas del agente son Python plano justamente para poder
+# probarse sin ellos. Este extra existe para el trabajo de CI que comprueba que
+# ADK sí acepta esas funciones — si no, el fallo aparecería al arrancar el
+# contenedor en Cloud Run y nadie se enteraría hasta el despliegue.
+agente = ["google-adk>=2.7", "python-dotenv>=1.0"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

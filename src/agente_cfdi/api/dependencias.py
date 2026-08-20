@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
@@ -50,7 +51,16 @@ def inquilino_configurado() -> str:
     return os.environ.get(VARIABLE_INQUILINO, INQUILINO_PREDETERMINADO).strip()
 
 
-def bitacora_actual() -> Iterator[Bitacora]:
+@contextmanager
+def abrir_bitacora() -> Iterator[Bitacora]:
+    """Abre la bitácora fuera de FastAPI.
+
+    Existe porque las herramientas del agente ADK corren sin inyección de
+    dependencias y necesitan exactamente la misma configuración —misma ruta,
+    mismo inquilino— que los endpoints. Duplicar esa lectura del entorno sería
+    la forma más fácil de que el agente acabara consultando otra bitácora que la
+    que el servicio escribe.
+    """
     conexion = sqlite3.connect(
         ruta_de_la_bitacora(), timeout=ESPERA_POR_EL_CANDADO, check_same_thread=False
     )
@@ -60,6 +70,11 @@ def bitacora_actual() -> Iterator[Bitacora]:
         yield bitacora
     finally:
         conexion.close()
+
+
+def bitacora_actual() -> Iterator[Bitacora]:
+    with abrir_bitacora() as bitacora:
+        yield bitacora
 
 
 def fuente_actual() -> FuenteDeLibros:
