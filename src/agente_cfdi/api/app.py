@@ -42,6 +42,7 @@ from ..bitacora.cadena import CadenaRota
 from ..cfdi.errores import CFDIInvalido
 from ..cfdi.lector import leer_cfdi
 from ..fuentes.protocolo import ErrorDeFuente, FuenteDeLibros
+from .autenticacion import exigir_token_de_escritura
 from .dependencias import ancla_actual, bitacora_actual, fuente_actual
 from .esquemas import (
     ConstanciaDeAnclaje,
@@ -110,7 +111,11 @@ def salud(bitacora: Bitacora = Depends(bitacora_actual)) -> dict:
     }
 
 
-@app.post("/ingesta", response_model=RespuestaDeIngesta)
+@app.post(
+    "/ingesta",
+    response_model=RespuestaDeIngesta,
+    dependencies=[Depends(exigir_token_de_escritura)],
+)
 async def ingesta(
     archivos: list[UploadFile],
     bitacora: Bitacora = Depends(bitacora_actual),
@@ -229,7 +234,11 @@ async def ingesta(
     )
 
 
-@app.post("/cesiones", response_model=RespuestaDeCesion)
+@app.post(
+    "/cesiones",
+    response_model=RespuestaDeCesion,
+    dependencies=[Depends(exigir_token_de_escritura)],
+)
 def ceder(
     peticion: PeticionDeCesion,
     respuesta: Response,
@@ -344,7 +353,11 @@ def verificacion(bitacora: Bitacora = Depends(bitacora_actual)) -> dict:
     }
 
 
-@app.post("/bitacora/anclaje", response_model=RespuestaDeAnclaje)
+@app.post(
+    "/bitacora/anclaje",
+    response_model=RespuestaDeAnclaje,
+    dependencies=[Depends(exigir_token_de_escritura)],
+)
 def anclar(
     dia: str | None = None,
     bitacora: Bitacora = Depends(bitacora_actual),
@@ -452,7 +465,11 @@ def prueba_de_integridad(
     )
 
 
-@app.post("/cierre-diario", response_model=RespuestaDeCierre)
+@app.post(
+    "/cierre-diario",
+    response_model=RespuestaDeCierre,
+    dependencies=[Depends(exigir_token_de_escritura)],
+)
 def cierre_diario(
     dia: str | None = None,
     respuesta: Response = None,  # type: ignore[assignment]

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from agente.agent import MODELO, root_agent
 from agente_cfdi.api.app import app as app_auditoria
 from agente_cfdi.api.app import cierre_diario as cierre_del_motor
+from agente_cfdi.api.autenticacion import exigir_token_de_escritura
 from agente_cfdi.api.dependencias import ancla_actual, bitacora_actual
 from agente_cfdi.api.esquemas import RespuestaDeCierre
 from agente_cfdi.bitacora.almacen import Bitacora
@@ -120,7 +121,11 @@ async def chat(request: ChatRequest):
     )
 
 
-@app.post("/api/cierre-diario", response_model=RespuestaDeCierre)
+@app.post(
+    "/api/cierre-diario",
+    response_model=RespuestaDeCierre,
+    dependencies=[Depends(exigir_token_de_escritura)],
+)
 def cierre_diario(
     dia: str | None = None,
     respuesta: Response = None,  # type: ignore[assignment]
