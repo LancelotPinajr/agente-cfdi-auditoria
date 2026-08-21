@@ -219,3 +219,18 @@ __marimo__/
 
 # bitácora local de la demo
 *.db
+
+# --- Llaves privadas de wallet (tareas 2.7, 2.10 y 3.6) ---------------------
+# La llave del anclaje vive en Secret Manager y en ningún otro lado. Estos
+# patrones son defensa en profundidad: lo correcto es no escribirla nunca en
+# disco —`generate_wallet.py` la manda por tubería a gcloud— pero un descuido a
+# las once de la noche no debería terminar en un repo publico e inmutable.
+tu_llave.txt
+*llave*.txt
+*.key
+*.pem
+wallet*.json
+
+# Salida de tools/demo.py: la prueba de inclusion que descarga para pasarsela al
+# verificador independiente. Es basura de corrida, distinta en cada ejecucion.
+prueba_demo.json

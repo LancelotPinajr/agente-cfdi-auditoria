@@ -27,3 +27,9 @@ httpx==0.28.1
 # pip abre un entorno aislado y vuelve a bajarlo de PyPI en un subproceso que
 # NO hereda el --timeout de arriba. Es lo que tumbo la build 717a8198.
 setuptools==80.9.0
+
+# Anclaje en cadena real (2.7 y 3.6). La imagen SI lo lleva: el job diario
+# ancla desde Cloud Run. `pywin32`, que web3 declara, es condicional de Windows
+# y no entra en la imagen Linux.
+web3==7.16.0
+eth-account==0.13.7

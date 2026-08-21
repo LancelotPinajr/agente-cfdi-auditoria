@@ -1,0 +1,161 @@
+{
+  "nombre": "AnclaDeRaices",
+  "solc": "0.8.24",
+  "optimizado": {
+    "habilitado": true,
+    "runs": 200
+  },
+  "sha256_del_fuente": "bedc260197aa36735c4c2e80a244062fab3100a05d8c097c96d5d7df75323331",
+  "abi": [
+    {
+      "inputs": [],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "dia",
+          "type": "string"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "raizPrevia",
+          "type": "bytes32"
+        }
+      ],
+      "name": "DiaYaAnclado",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NoEsElDueno",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "RaizVacia",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "raiz",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "string",
+          "name": "dia",
+          "type": "string"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "momento",
+          "type": "uint256"
+        }
+      ],
+      "name": "RaizAnclada",
+      "type": "event"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "name": "ancladoEn",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "raiz",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "string",
+          "name": "dia",
+          "type": "string"
+        }
+      ],
+      "name": "anclar",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "dia",
+          "type": "string"
+        }
+      ],
+      "name": "consultar",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "raiz",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint256",
+          "name": "momento",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "dueno",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "",
+          "type": "string"
+        }
+      ],
+      "name": "raizDelDia",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x60a060405234801561000f575f80fd5b50336080526080516104e46100325f395f8181608b015261019701526104e45ff3fe608060405234801561000f575f80fd5b5060043610610055575f3560e01c80632f295a011461005957806352a07d1814610086578063af9af8da146100c5578063d04e215e146100fe578063fe18109714610113575b5f80fd5b61006c61006736600461030e565b61013d565b604080519283526020830191909152015b60405180910390f35b6100ad7f000000000000000000000000000000000000000000000000000000000000000081565b6040516001600160a01b03909116815260200161007d565b6100f06100d3366004610361565b805160208183018101805160018252928201919093012091525481565b60405190815260200161007d565b61011161010c36600461040c565b61018c565b005b6100f0610121366004610361565b80516020818301810180515f8252928201919093012091525481565b5f805f8484604051610150929190610454565b90815260200160405180910390205460018585604051610171929190610454565b908152602001604051809103902054915091505b9250929050565b336001600160a01b037f000000000000000000000000000000000000000000000000000000000000000016146101d55760405163d2d7158360e01b815260040160405180910390fd5b826101f357604051630390f26560e11b815260040160405180910390fd5b5f808383604051610205929190610454565b90815260405190819003602001902054905080156102455782828260405163af4cb08d60e01b815260040161023c9392919061048b565b60405180910390fd5b835f8484604051610257929190610454565b908152602001604051809103902081905550426001848460405161027c929190610454565b908152602001604051809103902081905550837fa74fa2900ff4bae2bfd20c360eb3a8cee6e4961435e583d7ca57109f948c3d198484426040516102c29392919061048b565b60405180910390a250505050565b5f8083601f8401126102e0575f80fd5b50813567ffffffffffffffff8111156102f7575f80fd5b602083019150836020828501011115610185575f80fd5b5f806020838503121561031f575f80fd5b823567ffffffffffffffff811115610335575f80fd5b610341858286016102d0565b90969095509350505050565b634e487b7160e01b5f52604160045260245ffd5b5f60208284031215610371575f80fd5b813567ffffffffffffffff80821115610388575f80fd5b818401915084601f83011261039b575f80fd5b8135818111156103ad576103ad61034d565b604051601f8201601f19908116603f011681019083821181831017156103d5576103d561034d565b816040528281528760208487010111156103ed575f80fd5b826020860160208301375f928101602001929092525095945050505050565b5f805f6040848603121561041e575f80fd5b83359250602084013567ffffffffffffffff81111561043b575f80fd5b610447868287016102d0565b9497909650939450505050565b818382375f9101908152919050565b81835281816020850137505f828201602090810191909152601f909101601f19169091010190565b604081525f61049e604083018587610463565b905082602083015294935050505056fea2646970667358221220fbb1c6c5f14806e8d776285de9bbc25c9d94cc117e5b16ec9ac2ffb8ef2c996364736f6c63430008180033"
+}

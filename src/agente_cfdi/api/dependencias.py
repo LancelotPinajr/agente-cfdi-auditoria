@@ -81,12 +81,44 @@ def fuente_actual() -> FuenteDeLibros:
     return fuente_desde_entorno()
 
 
+VARIABLE_RED = "AGENTE_CFDI_ANCLA_RED"
+VARIABLE_CONTRATO = "AGENTE_CFDI_ANCLA_CONTRATO"
+
+
 def ancla_actual() -> Ancla:
     """Dónde se publica la raíz del día.
 
-    Hoy siempre simulada. Conectar una cadena real es sustituir esta función por
-    otra que devuelva una implementación del mismo protocolo — nada más del
-    sistema tiene que enterarse. La bandera `verificable_por_terceros` viaja
-    hasta la respuesta HTTP para que la diferencia nunca quede escondida.
+    Sale de la configuración, y el default es la simulada **a propósito**:
+    equivocarse por omisión tiene que llevar a un ancla que se declara falsa, no
+    a una que parece real. La bandera `verificable_por_terceros` viaja hasta la
+    respuesta HTTP para que la diferencia nunca quede escondida.
+
+    Para anclar de verdad hacen falta las tres cosas a la vez: la red, la
+    dirección del contrato y una llave. Si falta cualquiera, **no se degrada en
+    silencio a simulada**: se levanta. Un despliegue que cree estar anclando en
+    mainnet y esté firmando constancias de mentira es exactamente el escenario
+    que este proyecto existe para no producir.
     """
-    return AnclaSimulada(etiqueta=os.environ.get("AGENTE_CFDI_ANCLA", "local"))
+    red = os.environ.get(VARIABLE_RED, "").strip()
+    if not red:
+        return AnclaSimulada(etiqueta=os.environ.get("AGENTE_CFDI_ANCLA", "local"))
+
+    contrato = os.environ.get(VARIABLE_CONTRATO, "").strip()
+    if not contrato:
+        raise RuntimeError(
+            f"{VARIABLE_RED}={red!r} pide anclar en una cadena real, pero "
+            f"{VARIABLE_CONTRATO} está vacía: no hay dónde publicar la raíz"
+        )
+
+    # Los import van aquí y no arriba porque `web3` solo hace falta cuando se
+    # ancla de verdad: quien corre las pruebas o levanta la demo con el ancla
+    # simulada no tiene por qué instalarlo.
+    from ..bitacora.ancla_evm import AnclaEVM
+    from ..bitacora.llaves import proveedor_desde_entorno
+
+    return AnclaEVM(
+        nombre_de_red=red,
+        contrato=contrato,
+        llave=proveedor_desde_entorno(),
+        rpc=os.environ.get("AGENTE_CFDI_ANCLA_RPC") or None,
+    )
