@@ -7,10 +7,11 @@ encadenada por hash, detecta cuando una factura se intenta ceder dos veces, y
 publica la raíz de la evidencia del día — de modo que un financiador pueda
 verificarla **sin confiar en nosotros**.
 
-> **El anclaje todavía es simulado.** El árbol de Merkle, la prueba de
-> inclusión, el endpoint y el verificador independiente están hechos; falta
-> conectar una red real. Mientras tanto cada respuesta lo declara
-> (`verificable_por_terceros: false`) en vez de dejarlo escrito solo aquí.
+> **El anclaje todavía es simulado en producción.** El contrato está escrito y
+> compilado, y la implementación contra cadena EVM cumple el mismo protocolo que
+> la simulada: falta desplegar el contrato y fondear la wallet. Mientras tanto
+> cada respuesta lo declara (`verificable_por_terceros: false`) en vez de
+> dejarlo escrito solo aquí.
 
 Escrito para el [All Things Agentic Hackathon](https://allthingsagentichackathon.devpost.com/),
 categoría *Fortified Enterprise Fleet*.
@@ -61,6 +62,8 @@ pide paso a paso.
 | Infraestructura | Google Cloud Run |
 | Job diario | Cloud Scheduler |
 | Secretos | Secret Manager |
+| Alertas | Cloud Monitoring — dos políticas, ver «Observabilidad» |
+| Anclaje | Base (contrato propio en Solidity, `web3.py`) |
 
 ### Nota sobre el modelo
 
@@ -100,11 +103,17 @@ es auditable sin confiar en el modelo.
 | Endpoints de ingesta y cesión | ✅ |
 | Cotejo contra los libros | ✅ |
 | Prueba de inclusión (Merkle) | ✅ |
-| Anclaje | ⚠️ simulado — falta conectar red real |
 | Agente ADK en Cloud Run | ✅ desplegado y verificado en producción |
-| Integración de los dos servicios | ⬜ la URL pública aún no expone la auditoría |
+| Integración de los dos servicios | ✅ la URL pública expone la auditoría en `/auditoria` |
+| Cierre diario real | ✅ verifica la cadena y ancla; ya no es un stub |
+| Semáforo de integridad | ✅ |
+| Autenticación de escrituras | ✅ leer es libre, escribir exige token |
+| Alertas del job diario | ✅ dos políticas, confirmadas con una alerta real |
+| Llave del anclaje en Secret Manager | ✅ se lee en cada anclaje, rotable sin redesplegar |
+| Contrato de anclaje | ⚠️ escrito y compilado — **sin desplegar**, falta gas |
+| Anclaje en red real | ⚠️ implementado — simulado hasta desplegar el contrato |
 
-320 pruebas. El núcleo verificable —canon, hashes, cadena, Merkle, cotejo— no
+375 pruebas. El núcleo verificable —canon, hashes, cadena, Merkle, cotejo— no
 depende de nada externo; FastAPI, uvicorn y httpx entran solo en el borde HTTP.
 
 ---
@@ -162,7 +171,19 @@ ADC y al proyecto de abajo.
 | `CORD_FISCAL_URL` | Base de la API de CØRD Fiscal |
 | `CORD_FISCAL_TOKEN` | JWT del agente para esa PYME — de Secret Manager, nunca del repo |
 | `AGENTE_CFDI_SEMILLA` | Semilla del lote sintético |
-| `WALLET_PRIVATE_KEY` | Llave privada EVM (consumida vía Secret Manager) |
+| `AGENTE_CFDI_BITACORA` | Ruta del SQLite. En Cloud Run, `/tmp/bitacora.db` |
+| `AGENTE_CFDI_INQUILINO` | RFC del contribuyente. Default `DEMO000000XX0` |
+| `AGENTE_CFDI_TOKEN_ESCRITURA` | Token que exigen los endpoints que escriben |
+| `AGENTE_CFDI_ANCLA_RED` | `base-sepolia`, `base`, `polygon-amoy` o `polygon`. Vacía = ancla simulada |
+| `AGENTE_CFDI_ANCLA_CONTRATO` | Dirección del contrato de anclaje |
+| `AGENTE_CFDI_ANCLA_RPC` | Sobrescribe el RPC público de la red |
+| `AGENTE_CFDI_LLAVE_SECRETO` | Nombre del secreto con la llave privada. **Ruta de producción** |
+| `AGENTE_CFDI_LLAVE` | Llave privada en texto plano. **Solo desarrollo contra testnet** |
+
+Las tres del anclaje van juntas: si defines `AGENTE_CFDI_ANCLA_RED` y falta el
+contrato o la llave, el servicio **levanta** en vez de caer a simulada. Un
+despliegue que crea estar anclando en mainnet mientras firma constancias de
+mentira es el escenario que este proyecto existe para no producir.
 
 Sin configurar nada, el agente corre contra la fuente sintética: quien clona el
 repo obtiene una demo que funciona, no un error de credenciales.
@@ -207,18 +228,30 @@ despliegue desde fuente falla con un 403 sobre el bucket `run-sources-*`:
 El job `job-cierre-diario` dispara `POST /api/cierre-diario` todos los días a las
 `23:59`, con 3 reintentos.
 
-Hasta el 16-ago apuntaba a un dominio que no existía y por eso nunca ejecutó; ya
-quedó repuntado a la URL real. **Su primera ejecución con éxito está pendiente de
-observarse**, y el criterio de la tarea 2.9 pide dos días seguidos sin que nadie
-lo toque.
+Hasta el 16-ago apuntaba a un dominio que no existía y por eso nunca ejecutó. Ya
+quedó repuntado a la URL real y corre todas las noches desde el 17-ago; la
+evidencia de la primera corrida está en
+[`docs/evidencias/2026-08-17-job-diario.md`](docs/evidencias/2026-08-17-job-diario.md).
+
+**Esas primeras corridas pegaron contra un stub y no anclaron nada.** El cierre
+real se desplegó el 20-ago. El criterio de 2.9 pide dos días seguidos dejando dos
+anclajes, así que sigue pendiente de observarse con el código nuevo.
+
+Un detalle que hay que mirar: el job dispara a las 23:59 de Ciudad de México
+—05:59 UTC— pero la bitácora agrupa por **día UTC**. El cierre del día UTC corre
+cuando ese día lleva seis horas, así que lo que se escriba después no queda bajo
+ninguna raíz. El arreglo es disparar al final del día UTC:
+
+    gcloud scheduler jobs update http job-cierre-diario       --location us-central1 --time-zone=Etc/UTC
 
 ## Endpoints
 
-> **Hoy hay dos aplicaciones y una sola está desplegada.** El servicio de
-> auditoría (`src/agente_cfdi/api/app.py`) tiene la lógica de CFDI, bitácora y
-> Merkle; el servicio del agente (`main.py`) es el que corre en Cloud Run. La URL
-> pública **no expone todavía** los endpoints de auditoría. Unificarlos es la
-> tarea 1.13 y es prerrequisito de la ejecución autónoma (2.14).
+> **Hay dos aplicaciones y un solo despliegue.** El servicio de auditoría
+> (`src/agente_cfdi/api/app.py`) tiene la lógica de CFDI, bitácora y Merkle; el
+> del agente (`main.py`) es el transporte, y desde la tarea 1.13 monta al primero
+> en `/auditoria`. Las rutas de la tabla de abajo son las de la aplicación: en la
+> nube todas cuelgan de ese prefijo. Evidencia en
+> [`docs/evidencias/2026-08-17-integracion-1.13.md`](docs/evidencias/2026-08-17-integracion-1.13.md).
 
 ### Servicio de auditoría — `src/agente_cfdi/api/app.py`
 
@@ -228,9 +261,30 @@ lo toque.
 | `POST` | `/cesiones` | Intenta ceder un folio a un financiador |
 | `GET` | `/cesiones/{uuid}` | ¿Está tomado? (no dice a nombre de quién) |
 | `GET` | `/bitacora/verificacion` | Recorre la cadena entera y reporta si es íntegra |
-| `GET` | `/salud` | Sonda de vida |
-| `POST` | `/bitacora/anclaje` | Publica la raíz de Merkle del día (job diario) |
+| `GET` | `/salud` | Sonda de vida. No verifica la cadena: eso es otro endpoint |
+| `GET` | `/semaforo` | Verde, ámbar o rojo, con la fila del problema si la hay |
+| `POST` | `/bitacora/anclaje` | Publica la raíz de Merkle del día |
+| `POST` | `/cierre-diario` | Verifica la cadena y ancla. Lo dispara el job |
 | `GET` | `/auditoria/prueba/{uuid}` | La prueba de inclusión, verificable sin nosotros |
+
+### Quién puede escribir
+
+Leer es libre; escribir exige un token. La línea no está en el servicio, está en
+la operación:
+
+| Sin credencial | Exige `Authorization: Bearer <token>` |
+|---|---|
+| `/`, `/api/chat` | `POST /auditoria/ingesta` |
+| `/auditoria/salud`, `/auditoria/semaforo` | `POST /auditoria/cesiones` |
+| `/auditoria/bitacora/verificacion` | `POST /auditoria/bitacora/anclaje` |
+| `/auditoria/auditoria/prueba/{uuid}` | `POST /api/cierre-diario` |
+
+Que un tercero pueda verificar la cadena **sin pedirnos permiso** es la tesis del
+proyecto: hay una prueba que falla si alguien le pone credencial a una lectura.
+
+En Cloud Run sin token configurado, las escrituras devuelven `503`. Equivocarse
+por omisión deja el sistema cerrado, no abierto. En local no se exige nada: ahí
+la bitácora es un archivo con datos sintéticos.
 
 Levantar y correr el escenario completo:
 
@@ -256,37 +310,88 @@ facturas de otra empresa.
 | Libros inalcanzables | `503`, **no** «sin respaldo» |
 | CFDI ilegible o duplicado dentro del lote | se reporta en `fallas`; el lote sigue |
 
-**Hueco declarado:** los endpoints no autentican a quien llama. En Cloud Run
-quedan detrás de IAM, pero eso protege el perímetro y no distingue a un
-financiador de otro. Antes de datos reales hace falta autenticación por
-financiador.
+**Hueco declarado:** el token distingue quién puede escribir, **no quién es**.
+Un financiador con el token puede ceder a nombre de cualquiera. Antes de datos
+reales hace falta autenticación por financiador; hoy el despliegue está atado a
+un solo contribuyente y eso lo hace tolerable, no correcto.
 
 ### Servicio del agente ADK — `main.py` (lo desplegado)
 
 - `GET /` : Health check. Devuelve el framework y el id del modelo en uso.
 - `POST /api/chat` : Ejecuta un turno del agente ADK. Recibe
   `{"message": "hola"}` y acepta `session_id` opcional para hilar la conversación.
-- `POST /api/cierre-diario` : Llamado por Cloud Scheduler. Hoy simulado.
+- `POST /api/cierre-diario` : Llamado por Cloud Scheduler. Verifica la cadena y
+  ancla la raíz del día. **Exige token.** Si la cadena está rota no ancla y
+  responde `500`: publicar la raíz de una cadena manipulada dejaría constancia
+  permanente de datos corruptos.
+- `/auditoria/*` : el servicio de auditoría, montado aquí.
 
 **Este servicio está desplegado con `--allow-unauthenticated`**, así que sus
-rutas son públicas. Es deliberado para que el jurado pueda abrir la URL, y hay
-que cerrarlo antes de conectar datos reales.
+lecturas son públicas. Es deliberado para que el jurado pueda abrir la URL sin
+pedir credenciales. Las escrituras dejaron de serlo el 20-ago.
+
+## Observabilidad
+
+Un job diario falla de dos maneras, y la segunda no dispara ninguna alarma por sí
+sola:
+
+| Política | Qué caza |
+|---|---|
+| **Cierre diario FALLIDO** | El cierre devolvió `5xx`: cadena rota o anclaje imposible |
+| **Cierre diario NO CORRIÓ** | Silencio. El job se deshabilitó, se borró o dejó de disparar |
+
+La segunda es la que importa: nadie devuelve error porque nadie corre. Se
+descubre por casualidad tres semanas después.
+
+    powershell -File ./configurar_alertas.ps1 -Email tu@correo.com
+
+El script es idempotente y cada política lleva su propio instructivo dentro, que
+viaja en el cuerpo del correo. La de cadena rota dice explícitamente **no
+reintentar**.
+
+No se usa una condición de ausencia para la segunda: el máximo que admite la API
+son 23h30m y el job corre cada 24h exactas, así que la ventana vencería media
+hora antes de cada cierre y la alerta gritaría a diario. Una alerta que avisa
+todos los días es una alerta que se aprende a ignorar. Se suma la métrica sobre
+una ventana móvil de 24 h con 30 minutos de tolerancia.
+
+Verificado el 20-ago con una política desechable: el correo llega a la bandeja y
+la documentación se ve en el cuerpo.
+
+---
 
 ## Contrato en blockchain
 
-**Todavía no hay anclaje real.** Está hecho todo lo que lo rodea —árbol de
-Merkle, ruta de inclusión, endpoint, constancia, idempotencia del job diario y
-verificador independiente— detrás de un protocolo con una implementación
-simulada.
+**Todavía no hay anclaje real, pero ya no falta código.** El contrato
+[`contratos/AnclaDeRaices.sol`](contratos/AnclaDeRaices.sol) guarda un `bytes32`
+por día y emite evento; `AnclaEVM` firma y publica cumpliendo el mismo protocolo
+que la simulada. Falta desplegar el contrato y fondear la wallet — gas, no
+teclado.
+
+El contrato **prohíbe reanclar un día**. Si un mismo día admitiera dos raíces,
+quien guarda la bitácora podría publicar una, reescribir el historial y publicar
+otra, y un tercero no sabría cuál creer. El artefacto compilado se versiona con
+el `sha256` del fuente para que cualquiera recompile y compare contra lo que
+quede en la cadena.
+
+    python tools/compilar_contrato.py
+    python tools/desplegar_contrato.py --red base-sepolia
 
 El ancla simulada **se declara como tal** en cada respuesta
 (`verificable_por_terceros: false`, más una advertencia en texto) y el
 verificador sale con código 2 en vez de 0. Un ancla de mentira que pareciera real
 sería peor que ninguna: pasaría por buena en un video de demo.
 
-Conectar una red es sustituir una clase por otra que cumpla el mismo protocolo;
-exige decidir red, financiar gas y manejar una llave — riesgos que no son de
-código. Ver [ADR 0006](docs/adr/0006-anclaje-y-prueba.md).
+La llave privada vive en Secret Manager y se lee con `versions/latest` **en cada
+anclaje**, no como variable de entorno: Cloud Run resuelve los secretos al
+arrancar la instancia, y con `--min-instances=1` esa instancia vive días, así que
+rotar no surtiría efecto hasta redesplegar. Es una petición al día.
+
+    python generate_wallet.py --subir      # genera, guarda y reporta la dirección
+    python generate_wallet.py --direccion  # qué dirección tiene el secreto
+
+La llave nunca se escribe en disco ni pasa por la línea de comandos. Ver
+[ADR 0006](docs/adr/0006-anclaje-y-prueba.md).
 
 ### Verificar una prueba sin confiar en nosotros
 
@@ -338,6 +443,9 @@ CFF art. 30.
 - [Contrato de datos del expediente](docs/contrato-expediente.md) — qué sale, qué no, y por qué
 - [Datos sintéticos](docs/datos-sinteticos.md) — RFC que no pueden ser de nadie, y huecos conocidos
 - [Frontera con CØRD Fiscal](docs/trabajo-preexistente.md) — declaración verificable
+- [Manual técnico](docs/manual-tecnico.md) — cómo funciona hoy, servicio por servicio
+- [Manual de usuario](docs/manual-usuario.md) — cómo usarlo, contra la nube o en local
+- [Evidencias](docs/evidencias/) — corridas reales con logs correlacionados
 - [Bitácora](docs/bitacora/) — estado y decisiones por día
 
 ## Trabajo preexistente
