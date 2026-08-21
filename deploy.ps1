@@ -38,12 +38,20 @@ Write-Host "============================================="
 # los libros sinteticos y los CFDI hablan de empresas distintas y TODO sale
 # sin_respaldo — pareceria que el auditor falla cuando en realidad se le esta
 # preguntando por facturas que nunca vio.
+#
+# --min-instances=1 mantiene la instancia viva entre un cierre y el siguiente.
+# Sin esto Cloud Run la recicla cuando no hay trafico y /tmp se borra: el cierre
+# de manana arrancaria en altura 0 y el anclaje de hoy habria desaparecido, con
+# lo cual el criterio de 2.9 —"dos dias seguidos, dos anclajes"— no se podria
+# cumplir nunca. Es un puente, no la solucion: la instancia tambien se recicla
+# por mantenimiento. Cuesta una instancia encendida todo el mes.
 gcloud run deploy $SERVICE_NAME `
     --source . `
     --project $PROJECT_ID `
     --region $REGION `
     --allow-unauthenticated `
     --max-instances=1 `
+    --min-instances=1 `
     --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=global,GOOGLE_GENAI_USE_VERTEXAI=1,AGENTE_CFDI_BITACORA=/tmp/bitacora.db,AGENTE_CFDI_SEMILLA=20260814"
 
 if ($?) {

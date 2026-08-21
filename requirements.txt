@@ -21,3 +21,9 @@ python-dotenv==1.2.3
 python-multipart==0.0.32
 pydantic==2.13.4
 httpx==0.28.1
+
+# El backend de construccion. Va aqui, y no solo en el [build-system] del
+# pyproject, porque la imagen instala el paquete desde fuente: sin esta linea
+# pip abre un entorno aislado y vuelve a bajarlo de PyPI en un subproceso que
+# NO hereda el --timeout de arriba. Es lo que tumbo la build 717a8198.
+setuptools==80.9.0

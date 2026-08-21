@@ -32,6 +32,14 @@ from agente_cfdi.sintetico.generador import generar_lote  # noqa: E402
 
 BASE = os.environ.get("AGENTE_CFDI_API", "http://127.0.0.1:8000")
 
+# La consola de Windows usa cp1252 por omisión y revienta con los símbolos de
+# abajo. Un escenario de demo que muera con UnicodeEncodeError a media grabación
+# es peor que no tenerlo, y quien lo corra no tiene por qué configurar su
+# terminal primero. Mismo criterio que en `verificar_prueba.py`.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
 # Los mismos valores con los que `fuente_desde_entorno` construye el lote
 # sintético. Si cambian allá, cambian aquí — están juntos a propósito.
 SEMILLA = int(os.environ.get("AGENTE_CFDI_SEMILLA", "20260814"))

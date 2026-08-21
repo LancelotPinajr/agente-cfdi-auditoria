@@ -45,6 +45,14 @@ BASE = os.environ.get("AGENTE_CFDI_API", "http://127.0.0.1:8000")
 RUTA_BD = os.environ.get("AGENTE_CFDI_BITACORA", "bitacora.db")
 FILA_ALTERADA = 3
 
+# La consola de Windows usa cp1252 por omisión y revienta con los símbolos de
+# abajo. Un escenario de demo que muera con UnicodeEncodeError a media grabación
+# es peor que no tenerlo, y quien lo corra no tiene por qué configurar su
+# terminal primero. Mismo criterio que en `verificar_prueba.py`.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
 COLORES = {"verde": "🟢", "ambar": "🟡", "rojo": "🔴"}
 
 
