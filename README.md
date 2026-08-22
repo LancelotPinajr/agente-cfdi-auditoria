@@ -7,11 +7,11 @@ encadenada por hash, detecta cuando una factura se intenta ceder dos veces, y
 publica la raíz de la evidencia del día — de modo que un financiador pueda
 verificarla **sin confiar en nosotros**.
 
-> **El anclaje todavía es simulado en producción.** El contrato está escrito y
-> compilado, y la implementación contra cadena EVM cumple el mismo protocolo que
-> la simulada: falta desplegar el contrato y fondear la wallet. Mientras tanto
-> cada respuesta lo declara (`verificable_por_terceros: false`) en vez de
-> dejarlo escrito solo aquí.
+> **El anclaje ya es real, en testnet.** La raíz del día se publica en un
+> contrato propio en Base Sepolia y cualquiera puede comprobarla en el
+> explorador sin pedirnos nada. Falta repetirlo en mainnet (tarea 3.6). Cada
+> respuesta declara en qué red se ancló y si es verificable por terceros, así
+> que la diferencia nunca queda escondida.
 
 Escrito para el [All Things Agentic Hackathon](https://allthingsagentichackathon.devpost.com/),
 categoría *Fortified Enterprise Fleet*.
@@ -110,8 +110,10 @@ es auditable sin confiar en el modelo.
 | Autenticación de escrituras | ✅ leer es libre, escribir exige token |
 | Alertas del job diario | ✅ dos políticas, confirmadas con una alerta real |
 | Llave del anclaje en Secret Manager | ✅ se lee en cada anclaje, rotable sin redesplegar |
-| Contrato de anclaje | ⚠️ escrito y compilado — **sin desplegar**, falta gas |
-| Anclaje en red real | ⚠️ implementado — simulado hasta desplegar el contrato |
+| Contrato de anclaje | ✅ desplegado en Base Sepolia |
+| Anclaje en red real | ✅ publicando, con prueba verificada contra la cadena |
+| Ciclo autónomo diario | ✅ dos jobs encadenados: alimenta a las 23:00, ancla a las 23:59 |
+| Anclaje en mainnet | ⬜ tarea 3.6 — repetir la jugada, ~1 USD de gas al año |
 
 375 pruebas. El núcleo verificable —canon, hashes, cadena, Merkle, cotejo— no
 depende de nada externo; FastAPI, uvicorn y httpx entran solo en el borde HTTP.
@@ -362,11 +364,34 @@ la documentación se ve en el cuerpo.
 
 ## Contrato en blockchain
 
-**Todavía no hay anclaje real, pero ya no falta código.** El contrato
+**El anclaje es real y está corriendo.** El contrato
 [`contratos/AnclaDeRaices.sol`](contratos/AnclaDeRaices.sol) guarda un `bytes32`
 por día y emite evento; `AnclaEVM` firma y publica cumpliendo el mismo protocolo
-que la simulada. Falta desplegar el contrato y fondear la wallet — gas, no
-teclado.
+que la simulada.
+
+| | |
+|---|---|
+| Red | **Base Sepolia** (`chain 84532`) |
+| Contrato | [`0xe76b981159307a79c77B29796F59087D6c13d974`](https://sepolia.basescan.org/address/0xe76b981159307a79c77B29796F59087D6c13d974) |
+| Wallet que firma | `0x83C889F7C0866917288E5FCF14E9792096C95dDA` |
+
+La dirección va aquí y no solo en la configuración **a propósito**: sin ella
+publicada, un tercero no puede comprobar las raíces por su cuenta, y todo el
+argumento del proyecto se cae. Falta repetir la jugada en Base mainnet, que es
+la tarea 3.6 — mismo código, misma llave, alrededor de un dólar de gas por año
+de anclajes.
+
+### Cómo comprobar una raíz sin creernos
+
+    curl -s <URL>/auditoria/auditoria/prueba/<UUID> > prueba.json
+    python tools/verificar_prueba.py prueba.json
+
+Eso recalcula la hoja y recorre el camino de Merkle. El último paso lo hace
+quien verifica, en el explorador: consultar `consultar("AAAA-MM-DD")` en el
+contrato y comprobar que la raíz publicada sea la que la prueba declara.
+Verificado así el 22-ago-2026 para el día `2026-08-22`: raíz
+`3a540914bb5d42525c08f04c367b4f3069e4a21ebc66b57380b3e9fc2c8851a1`, idéntica en
+los dos lados.
 
 El contrato **prohíbe reanclar un día**. Si un mismo día admitiera dos raíces,
 quien guarda la bitácora podría publicar una, reescribir el historial y publicar
