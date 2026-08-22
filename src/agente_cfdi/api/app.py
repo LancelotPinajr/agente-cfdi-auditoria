@@ -30,6 +30,7 @@ inconsistentes. Se responde «no pude preguntar», que es la verdad.
 from __future__ import annotations
 
 import base64
+import io
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -42,8 +43,15 @@ from ..bitacora.cadena import CadenaRota
 from ..cfdi.errores import CFDIInvalido
 from ..cfdi.lector import leer_cfdi
 from ..fuentes.protocolo import ErrorDeFuente, FuenteDeLibros
+from ..sintetico.generador import generar_lote
+from .ciclo import anotar, semilla_configurada
 from .autenticacion import exigir_token_de_escritura
-from .dependencias import ancla_actual, bitacora_actual, fuente_actual
+from .dependencias import (
+    ancla_actual,
+    bitacora_actual,
+    fuente_actual,
+    inquilino_configurado,
+)
 from .esquemas import (
     ConstanciaDeAnclaje,
     EstadoDeCesion,
@@ -466,6 +474,127 @@ def prueba_de_integridad(
 
 
 @app.post(
+    "/ciclo-diario",
+    dependencies=[Depends(exigir_token_de_escritura)],
+)
+async def ciclo_diario(
+    cantidad: int = 40,
+    bitacora: Bitacora = Depends(bitacora_actual),
+    fuente: FuenteDeLibros = Depends(fuente_actual),
+) -> dict:
+    """Entrega el lote del día y lo lleva hasta el expediente (tarea 2.14).
+
+    El criterio de 2.14 pide el ciclo entero *sin intervención manual en ningún
+    paso*. El anclaje ya era automático desde 2.9, pero **el lote lo subía una
+    persona**: un ciclo cuyo primer paso necesita a alguien con `curl` es un
+    cierre automático de un trabajo manual, no un sistema autónomo.
+
+    Este endpoint hace lo que haría la PYME —entregar las facturas del día— y lo
+    dispara un segundo job unas horas antes del cierre.
+
+    **El lote es sintético y la respuesta lo dice.** No se inventan facturas para
+    que parezcan reales; salen del generador, con los RFC que el SAT no puede
+    haber asignado. Lo que el ciclo demuestra no es que existan facturas, sino
+    que el sistema las audita, las encadena, detecta el duplicado y publica la
+    raíz sin que nadie intervenga. Esa parte no es simulada.
+
+    **Correr dos veces el mismo día no ensucia nada, pero no hace lo obvio.**
+    El generador es determinista, así que la segunda corrida trae los mismos
+    folios. La ingesta los reaudita —legítimo: la cadena guarda todas las
+    auditorías y el índice apunta a la última—. Y la cesión a Banco Norte vuelve
+    a salir **aceptada**, que sorprende hasta que se recuerda por qué: ceder al
+    mismo financiador dos veces es un reintento de red, no un fraude, y el
+    sistema lo trata como idempotente. La que se rechaza, en la primera corrida
+    y en todas, es la de Factor Sur: otro financiador sobre un folio ya tomado.
+    """
+    lote = generar_lote(
+        cantidad=cantidad,
+        semilla=semilla_configurada(),
+        con_cesion_duplicada=True,
+    )
+    anotar(
+        "ciclo.inicio",
+        comprobantes=len(lote.comprobantes),
+        semilla=lote.semilla,
+        origen_del_lote="sintetico",
+    )
+
+    # Se reconstruyen `UploadFile` en vez de duplicar la lógica de `/ingesta`:
+    # el ciclo tiene que recorrer exactamente el mismo camino que un lote subido
+    # a mano, o dejaría de probar lo que dice probar.
+    archivos = [
+        UploadFile(
+            file=io.BytesIO(comprobante.a_xml().encode("utf-8")),
+            filename=f"{comprobante.uuid}.xml",
+        )
+        for comprobante in lote.comprobantes
+    ]
+    auditado = await ingesta(archivos, bitacora=bitacora, fuente=fuente)
+    anotar(
+        "ciclo.auditoria",
+        auditados=auditado.auditados,
+        rechazados=len(auditado.fallas),
+        hallazgos=auditado.hallazgos,
+        altura=auditado.altura,
+    )
+
+    # --- Cesión y detección del duplicado --------------------------------- #
+    #
+    # Se cede un folio respaldado y acto seguido se intenta cederlo otra vez a
+    # OTRO financiador. Es el fraude que da sentido al producto, y el ciclo lo
+    # ejecuta cada día para que el rechazo quede registrado, no descrito.
+    respaldados = [r for r in auditado.registros if r.veredicto == "respaldado"]
+    cesion: dict[str, object] = {"intentada": False}
+
+    if respaldados:
+        elegido = respaldados[0]
+        primera = bitacora.registrar_cesion(
+            uuid=elegido.uuid,
+            financiador="Banco Norte",
+            rfc_emisor=inquilino_configurado(),
+            total=Decimal(str(elegido.monto_del_cfdi)),
+        )
+        segunda = bitacora.registrar_cesion(
+            uuid=elegido.uuid,
+            financiador="Factor Sur",
+            rfc_emisor=inquilino_configurado(),
+            total=Decimal(str(elegido.monto_del_cfdi)),
+        )
+        cesion = {
+            "intentada": True,
+            "uuid": elegido.uuid,
+            "primera_aceptada": primera.aceptada,
+            "segunda_aceptada": segunda.aceptada,
+        }
+        anotar("ciclo.cesion", **cesion)
+
+        if segunda.aceptada:
+            # Si esto pasa, el producto no sirve: el mismo folio se vendió dos
+            # veces. Se grita en el log aunque la petición termine bien.
+            anotar(
+                "ciclo.ALERTA",
+                detalle="la segunda cesión fue aceptada; la doble cesión NO se detectó",
+                uuid=elegido.uuid,
+            )
+
+    resumen = {
+        "estado": "completado",
+        "origen_del_lote": "sintetico",
+        "comprobantes": len(lote.comprobantes),
+        "auditados": auditado.auditados,
+        "hallazgos": auditado.hallazgos,
+        "altura": auditado.altura,
+        "cesion": cesion,
+        "detalle": (
+            "lote entregado, auditado y encadenado. El anclaje lo hace el cierre "
+            "diario; este paso solo deja la cadena lista."
+        ),
+    }
+    anotar("ciclo.fin", **{k: v for k, v in resumen.items() if k != "detalle"})
+    return resumen
+
+
+@app.post(
     "/cierre-diario",
     response_model=RespuestaDeCierre,
     dependencies=[Depends(exigir_token_de_escritura)],
@@ -504,6 +633,13 @@ def cierre_diario(
         # No se ancla. Y se responde 500 a propósito: para el scheduler esto
         # tiene que verse rojo, no como un cierre más.
         respuesta.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+        anotar(
+            "cierre.cadena_rota",
+            dia=objetivo,
+            altura=altura,
+            posicion=rota.posicion,
+            detalle=rota.detalle,
+        )
         return RespuestaDeCierre(
             estado="cadena_rota",
             dia=objetivo,
@@ -519,6 +655,7 @@ def cierre_diario(
 
     hojas = bitacora.hojas_del_dia(objetivo)
     if not hojas:
+        anotar("cierre.sin_movimientos", dia=objetivo, altura=altura)
         return RespuestaDeCierre(
             estado="sin_movimientos",
             dia=objetivo,
@@ -532,12 +669,38 @@ def cierre_diario(
     try:
         constancia = bitacora.anclar_dia(objetivo, ancla)
     except ErrorDeAnclaje as falla:
+        anotar(
+            "cierre.anclaje_fallido",
+            dia=objetivo,
+            registros_del_dia=len(hojas),
+            motivo=str(falla),
+        )
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"no se pudo anclar {objetivo}: {falla}",
         ) from falla
 
     fila = bitacora.ancla_del_dia(objetivo)
+
+    # El registro del anclaje es la unica huella que sobrevive al reciclado de
+    # la instancia. La bitacora vive en /tmp: la constancia del 21-ago se perdio
+    # con una revision nueva y de aquel cierre solo quedo la linea de acceso de
+    # uvicorn, un 200 que no dice que anclo. Lo que no queda en el log no ocurrio,
+    # para efectos de demostrarlo.
+    anotar(
+        "cierre.anclado",
+        dia=objetivo,
+        ya_estaba=ya_estaba,
+        registros_del_dia=int(fila["registros"]),
+        altura=altura,
+        verificados=verificados,
+        raiz=bytes(fila["raiz"]).hex(),
+        red=constancia.red,
+        referencia=constancia.referencia,
+        verificable_por_terceros=constancia.verificable_por_terceros,
+        explorador=enlace_del_explorador(constancia),
+    )
+
     return RespuestaDeCierre(
         estado="ya_estaba_anclado" if ya_estaba else "anclado",
         dia=objetivo,
