@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import subprocess
+import time
 import sys
 from pathlib import Path
 
@@ -134,11 +135,40 @@ def main() -> int:
         raise SystemExit("la transacción revirtió: el contrato NO quedó desplegado")
 
     direccion = recibo["contractAddress"]
+
+    # La dirección se imprime ANTES de verificar nada. En el primer despliegue
+    # real, la comprobación de abajo reventó por un nodo sin sincronizar y el
+    # traceback se llevó por delante la única línea que importaba: el contrato
+    # estaba desplegado y el operador no tenía forma de saber dónde.
+    print()
+    print(f"Contrato desplegado en: {direccion}")
+    print(f"Transaccion           : {hash_tx.hex()}")
+
     desplegado = w3.eth.contract(address=direccion, abi=artefacto["abi"])
 
     # Comprobar el dueño no es ceremonia: si no es esta cuenta, el job diario
     # nunca podrá anclar y el fallo aparecería a las 23:59 de algún día.
-    dueno = desplegado.functions.dueno().call()
+    #
+    # Se reintenta porque los RPC públicos están balanceados entre varios nodos
+    # y el que atienda la consulta puede no haber visto todavía el bloque que
+    # acaba de minarse. No es que el contrato no exista: es que ese nodo aún no
+    # se entera.
+    dueno = None
+    for intento in range(6):
+        try:
+            dueno = desplegado.functions.dueno().call()
+            break
+        except Exception:
+            if intento == 5:
+                raise SystemExit(
+                    f"El contrato quedó en {direccion} pero el nodo no lo ve "
+                    f"todavía. No es un fallo del despliegue: reintenta la "
+                    f"comprobación en un minuto: "
+                    f"  python tools/desplegar_contrato.py --comprobar {direccion} "
+                    f"--red {args.red}"
+                )
+            time.sleep(5)
+
     if dueno.lower() != cuenta.address.lower():
         raise SystemExit(
             f"el contrato quedó a nombre de {dueno}, no de {cuenta.address}"

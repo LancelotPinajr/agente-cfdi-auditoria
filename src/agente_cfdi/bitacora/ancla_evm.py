@@ -22,6 +22,7 @@ cambió después de anclar, o que alguien más tiene la llave.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
@@ -213,11 +214,33 @@ class AnclaEVM:
                 f"{dia} NO quedó publicada"
             )
 
-        bloque = w3.eth.get_block(recibo["blockNumber"])
         return Constancia(
             red=self.red,
             referencia=referencia,
-            anclado_en=datetime.fromtimestamp(
-                bloque["timestamp"], tz=timezone.utc
-            ).replace(microsecond=0),
+            anclado_en=self._momento_de(w3, recibo["blockNumber"]),
         )
+
+    def _momento_de(self, w3: Web3, numero: int) -> datetime:
+        """Cuándo se selló, según el bloque; si el nodo no lo da, según el reloj.
+
+        La marca del bloque es la buena: es la que un tercero ve en el
+        explorador. Pero **no vale perder una constancia por ella**. Los RPC
+        públicos están balanceados y el nodo que atienda esta consulta puede no
+        haber visto todavía el bloque que acaba de minarse.
+
+        Sin este respaldo, una raíz correctamente publicada se perdería por un
+        dato decorativo, y el reintento sería peor que el fallo: el contrato
+        prohíbe reanclar, así que el sistema respondería «reconcilia a mano»
+        sobre algo que salió bien. Pasó en la primera publicación real, el
+        20-ago-2026.
+        """
+        for intento in range(4):
+            try:
+                marca = w3.eth.get_block(numero)["timestamp"]
+                return datetime.fromtimestamp(marca, tz=timezone.utc).replace(
+                    microsecond=0
+                )
+            except Exception:
+                if intento < 3:
+                    time.sleep(3)
+        return datetime.now(timezone.utc).replace(microsecond=0)
