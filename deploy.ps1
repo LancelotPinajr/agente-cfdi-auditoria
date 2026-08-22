@@ -15,6 +15,24 @@ if ($null -eq (Get-Command gcloud -ErrorAction SilentlyContinue)) {
 }
 
 $ACCOUNT = gcloud config get-value account 2>$null
+# --- Anclaje en cadena real (tareas 2.7 y 3.6) -----------------------------
+#
+# Estas TRES van aqui y no se configuran aparte con `gcloud run services update`,
+# aunque asi se pusieron la primera vez. La razon es `--set-env-vars` de abajo:
+# REEMPLAZA la lista completa de variables, no la actualiza. Cualquier variable
+# fijada fuera de este script desaparece en el siguiente despliegue.
+#
+# Paso el 21-ago-2026: el ancla real quedo configurada, un despliegue posterior
+# la borro sin avisar, y esa noche el cierre corrio bien y anclo con la SIMULADA.
+# El job devolvio 200, el tablero verde, y la unica pista era `red:
+# simulada:local` en el log del cierre.
+#
+# Los secretos (--update-secrets) van en otra lista y por eso el token de
+# escritura si sobrevivio a aquel despliegue. Las variables no.
+$ANCLA_RED = "base-sepolia"
+$ANCLA_CONTRATO = "0xe76b981159307a79c77B29796F59087D6c13d974"
+$LLAVE_SECRETO = "WALLET_PRIVATE_KEY"
+
 Write-Host "============================================="
 Write-Host " Desplegando Agente CFDI a Cloud Run..."
 Write-Host " Cuenta: $ACCOUNT"
@@ -52,7 +70,7 @@ gcloud run deploy $SERVICE_NAME `
     --allow-unauthenticated `
     --max-instances=1 `
     --min-instances=1 `
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=global,GOOGLE_GENAI_USE_VERTEXAI=1,AGENTE_CFDI_BITACORA=/tmp/bitacora.db,AGENTE_CFDI_SEMILLA=20260814"
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=global,GOOGLE_GENAI_USE_VERTEXAI=1,AGENTE_CFDI_BITACORA=/tmp/bitacora.db,AGENTE_CFDI_SEMILLA=20260814,AGENTE_CFDI_ANCLA_RED=$ANCLA_RED,AGENTE_CFDI_ANCLA_CONTRATO=$ANCLA_CONTRATO,AGENTE_CFDI_LLAVE_SECRETO=$LLAVE_SECRETO"
 
 if ($?) {
     Write-Host "`n✅ ¡Despliegue exitoso!"
