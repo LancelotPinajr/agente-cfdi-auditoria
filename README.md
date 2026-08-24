@@ -386,12 +386,27 @@ de anclajes.
     curl -s <URL>/auditoria/auditoria/prueba/<UUID> > prueba.json
     python tools/verificar_prueba.py prueba.json
 
-Eso recalcula la hoja y recorre el camino de Merkle. El último paso lo hace
-quien verifica, en el explorador: consultar `consultar("AAAA-MM-DD")` en el
-contrato y comprobar que la raíz publicada sea la que la prueba declara.
-Verificado así el 22-ago-2026 para el día `2026-08-22`: raíz
-`3a540914bb5d42525c08f04c367b4f3069e4a21ebc66b57380b3e9fc2c8851a1`, idéntica en
-los dos lados.
+Eso recalcula la hoja y recorre el camino de Merkle. El último paso —comprobar
+que la raíz a la que llega ese camino es la que está publicada en la red— lo
+hace quien verifica, contra el contrato y no contra nosotros:
+
+    python tools/leer_raiz_publicada.py 2026-08-24 <raiz-que-declara-la-prueba>
+
+Ese script tampoco importa nada del proyecto: habla por JSON-RPC con un nodo
+público de Base y no necesita ni `web3`. Quien prefiera no correr nada puede
+consultar `consultar("AAAA-MM-DD")` en el explorador, que da lo mismo.
+
+Verificado así los tres días anclados hasta ahora, idénticos en los dos lados:
+
+| Día | Raíz publicada |
+|---|---|
+| `2026-08-22` | `3a540914bb5d42525c08f04c367b4f3069e4a21ebc66b57380b3e9fc2c8851a1` |
+| `2026-08-23` | `fe20dcc2dbe7f8c975809d3369e52c2abde47a8f30f3626cd23a85f0572f083c` |
+| `2026-08-24` | `d17a61403dbd1c31a00800fd4e37e06aa0938bc97032f7e480b2763e2d849a83` |
+
+Los dos últimos se anclaron **sin intervención humana**; la evidencia con logs
+correlacionados está en
+[`docs/evidencias/2026-08-24-ciclo-autonomo.md`](docs/evidencias/2026-08-24-ciclo-autonomo.md).
 
 El contrato **prohíbe reanclar un día**. Si un mismo día admitiera dos raíces,
 quien guarda la bitácora podría publicar una, reescribir el historial y publicar
@@ -431,6 +446,18 @@ python tools/verificar_prueba.py prueba.json
 Ese script **no importa una sola línea de este proyecto** — solo `hashlib`,
 `json` y `base64`. Si la verificación usara nuestro código, comprobaría que
 nuestro código coincide consigo mismo, que no demuestra nada.
+
+Y el paso que cierra el lazo, contra la red:
+
+```bash
+python tools/leer_raiz_publicada.py <AAAA-MM-DD> <raiz-que-declara-la-prueba>
+```
+
+```
+contenido del registro  →  hoja declarada         ✓   verificar_prueba.py
+camino de Merkle        →  raíz declarada         ✓   verificar_prueba.py
+raíz declarada          == raíz en la cadena      ✓   leer_raiz_publicada.py
+```
 
 ---
 

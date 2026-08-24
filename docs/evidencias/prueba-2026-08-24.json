@@ -1,0 +1,44 @@
+{
+  "uuid": "58665D2C-659B-4A47-B432-61CA2D9E157D",
+  "posicion": 83,
+  "dia": "2026-08-24",
+  "canonico": "Q09SRC1DQU5PTi0yfGNmZGlfYXVkaXRhZG98ZXZlbnRvfHNjZmRpX2F1ZGl0YWRvfGlucXVpbGlub3xzREVNTzAwMDAwMFhYMHxlc2NyaXRvX2VufHQyMDI2LTA4LTI0VDA1OjAwOjM5Wnx1dWlkfHM1ODY2NUQyQy02NTlCLTRBNDctQjQzMi02MUNBMkQ5RTE1N0R8cmZjX2VtaXNvcnxzU0JaMDAwMDAwMTcxfHJmY19yZWNlcHRvcnxzUVRCMDAwMDAwNlg0fHRvdGFsfGQ1MTM1MDguODN8bW9uZWRhfHNNWE58ZmVjaGFfZW1pc2lvbnxzMjAyNi0wOC0xM1QwMTowOToxNHx2ZXJlZGljdG98c3Jlc3BhbGRhZG98bW9udG9fZW5fbGlicm9zfGQ1MTM1MDguODN8ZnVlbnRlX2RlX2xpYnJvc3xzY29udGFiaWxpZGFkIHNpbnTDqXRpY2EgKHNlbWlsbGEgMjAyNjA4MTQpIOKAlCBOTyBzb24gbGlicm9zIHJlYWxlcw==",
+  "hash_anterior": "dbec8358887a89387aea88afb9cd418f82166fa3e1a5494e92b039d715e3887c",
+  "hoja": "20333b25e057a399a8e108bfb92f3f8f82ba66c1dcd1f090078990b43c336929",
+  "ruta": [
+    {
+      "hermano": "8a64e4e0634eafd08a4262d6819c34a63ee76e3b6ac399b49f394ef79370483e",
+      "hermano_a_la_derecha": true
+    },
+    {
+      "hermano": "cfc2820ae13d37e9046855e5871791f73b43bc9351e3b4d1569b606ea3ba7737",
+      "hermano_a_la_derecha": true
+    },
+    {
+      "hermano": "91aa8f23ba94f29967648fff13bfffedf5eb8e7f12b3e3d5cfcb4e6e56a9eecd",
+      "hermano_a_la_derecha": true
+    },
+    {
+      "hermano": "d4792df26862ca23cce41e527bf6a4498dd2f9f9ce1047a3091805fd42557898",
+      "hermano_a_la_derecha": true
+    },
+    {
+      "hermano": "3290bffd81f0269ea68b588db8794c12da8abd802455d362aee2da13d06e7466",
+      "hermano_a_la_derecha": true
+    },
+    {
+      "hermano": "f680e2577ac0416e24a3961c47decab4520abc5f1d0597776b821250a2345e39",
+      "hermano_a_la_derecha": true
+    }
+  ],
+  "raiz": "d17a61403dbd1c31a00800fd4e37e06aa0938bc97032f7e480b2763e2d849a83",
+  "registros_del_dia": 41,
+  "ancla": {
+    "red": "base-sepolia",
+    "referencia": "0xc3e3827fba4556593dbb090181760dee516b3b81fda6b55b2d79d1c69a8e8947",
+    "anclado_en": "2026-08-24T05:59:04Z",
+    "verificable_por_terceros": true
+  },
+  "verificable_por_terceros": true,
+  "advertencia": null
+}
