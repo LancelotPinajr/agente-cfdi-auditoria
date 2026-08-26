@@ -735,6 +735,32 @@ def semaforo(
     objetivo = dia or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     altura = bitacora.altura()
 
+    # Tarea 3.16 — antes de verificar nada, distinguir «vacía» de «íntegra».
+    #
+    # `verificar()` sobre una cadena vacía devuelve 0 y no levanta: no hay
+    # eslabón que pueda no cuadrar. Sin este corte, el flujo seguía hasta el
+    # ámbar «ÍNTEGRA, SIN PUBLICAR» y afirmaba que los eslabones recalculables
+    # cuadraban. Cuadraban cero, que es cierto y no significa nada.
+    #
+    # No es un caso de laboratorio: la bitácora vive en /tmp y se pierde al
+    # reciclar la instancia. El día que eso pase, el semáforo tiene que decir
+    # que no hay cadena, no que la cadena está bien.
+    if altura == 0:
+        return Semaforo(
+            color="gris",
+            titulo="SIN CADENA QUE VERIFICAR",
+            detalle=(
+                "la bitácora está vacía: no hay ningún eslabón que recalcular. "
+                "Una cadena de altura cero verifica trivialmente, así que esto "
+                "NO es una afirmación de integridad — es la ausencia de datos "
+                "sobre los que afirmar nada. Si antes hubo registros, se "
+                "perdieron con la instancia"
+            ),
+            altura=0,
+            verificados=0,
+            dia=objetivo,
+        )
+
     try:
         verificados = bitacora.verificar()
     except CadenaRota as rota:

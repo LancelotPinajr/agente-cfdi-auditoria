@@ -51,6 +51,11 @@ def estado_de_integridad() -> dict:
 
     Devuelve un color:
     - `rojo`: se detectó manipulación. Incluye la fila exacta donde se rompe.
+    - `gris`: no hay cadena. La bitácora está vacía, así que no hay nada que
+      verificar. **No es lo mismo que estar bien.** Una cadena de altura cero
+      verifica trivialmente porque no tiene ningún eslabón que pueda fallar.
+      Si te preguntan por la integridad y el color es gris, di que no hay
+      datos sobre los cuales afirmar nada — nunca que el sistema está íntegro.
     - `ambar`: la cadena cuadra, pero su raíz no está publicada en una red
       real, así que solo demuestra consistencia interna.
     - `verde`: cuadra Y está publicada; cualquiera puede comprobarla sin

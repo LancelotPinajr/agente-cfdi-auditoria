@@ -225,10 +225,28 @@ class Semaforo(BaseModel):
     Por eso el verde exige **las dos cosas**: cadena íntegra Y raíz publicada en
     una red real. El día que el anclaje deje de ser simulado, esto se pone verde
     solo, sin tocar una línea.
+
+    ## Por qué son cuatro y no tres (tarea 3.16)
+
+    Faltaba distinguir **«íntegra» de «vacía»**, y no es un matiz: una cadena de
+    altura 0 verifica trivialmente porque no hay ningún eslabón que pueda no
+    cuadrar. Hasta hoy ese caso salía ámbar «ÍNTEGRA, SIN PUBLICAR», con un
+    detalle que decía que los eslabones cuadraban. Cuadraban cero.
+
+    Importa porque la bitácora vive en un SQLite en `/tmp` de Cloud Run y se
+    pierde al reciclar la instancia. El escenario real no es teórico: se recicla
+    la instancia, la cadena arranca en altura 0, y el semáforo informa que todo
+    está en orden. **Afirmar integridad justo después de haberlo perdido todo es
+    el fallo exacto que este producto existe para no cometer**, y sería el más
+    caro de que lo encuentre alguien de fuera.
+
+    El gris no es una alarma —no hay manipulación, y pintarlo rojo gastaría la
+    única señal que debe significar algo— pero tampoco es una confirmación. Dice
+    lo único honesto que se puede decir: aquí no hay nada que verificar.
     """
 
     color: str
-    """`verde`, `ambar` o `rojo`."""
+    """`verde`, `ambar`, `gris` o `rojo`."""
 
     titulo: str
     detalle: str

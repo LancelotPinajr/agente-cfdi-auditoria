@@ -858,6 +858,54 @@ def test_una_red_desconocida_no_inventa_un_enlace(cliente, lote):
 
 
 def test_el_semaforo_de_una_cadena_vacia_no_alarma(cliente):
+    """No alarma, pero tampoco tranquiliza: gris, no ámbar (tarea 3.16).
+
+    Este test afirmaba `ambar` y con eso congelaba el fallo: ámbar viene con el
+    título «ÍNTEGRA, SIN PUBLICAR» y un detalle que dice que los eslabones
+    recalculables cuadran. Sobre altura 0 cuadran cero, y eso no es integridad.
+    """
     cuerpo = cliente.get("/semaforo").json()
-    assert cuerpo["color"] == "ambar"
+    assert cuerpo["color"] == "gris"
     assert cuerpo["altura"] == 0
+    assert cuerpo["verificados"] == 0
+    assert cuerpo["posicion_del_problema"] is None
+
+
+def test_una_cadena_vacia_no_se_declara_integra(cliente):
+    """El fallo que 3.16 corrige, dicho sobre el texto que ve un humano.
+
+    Un color lo lee una máquina; el título y el detalle los lee el jurado, el
+    financiador y el auditor. Ninguno de los dos puede afirmar integridad cuando
+    no hay nada sobre lo que afirmarla.
+    """
+    cuerpo = cliente.get("/semaforo").json()
+
+    assert "ÍNTEGRA" not in cuerpo["titulo"]
+    assert "íntegra" not in cuerpo["detalle"].lower()
+    assert "trivialmente" in cuerpo["detalle"]
+
+
+def test_perder_la_bitacora_apaga_el_verde(cliente, lote, tmp_path):
+    """El escenario real: la instancia se recicla y /tmp se borra.
+
+    Antes de 3.16 el sistema pasaba de una cadena anclada y verde a una cadena
+    inexistente que se reportaba en ámbar «ÍNTEGRA». Perderlo todo no puede
+    parecerse a estar bien.
+    """
+    import sqlite3
+
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post("/cierre-diario")
+    antes = cliente.get("/semaforo").json()
+    assert antes["altura"] > 0
+
+    # Lo que hace Cloud Run al reciclar la instancia, sin rodeos.
+    conexion = sqlite3.connect(tmp_path / "bitacora.db")
+    conexion.execute("DELETE FROM bitacora_cadena")
+    conexion.commit()
+    conexion.close()
+
+    despues = cliente.get("/semaforo").json()
+    assert despues["color"] == "gris"
+    assert despues["altura"] == 0
+    assert "perdieron" in despues["detalle"]
