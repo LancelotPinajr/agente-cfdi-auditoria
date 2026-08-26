@@ -4,9 +4,9 @@
 hueco sin declarar es un descuido. La diferencia no está en el código —es idéntico— sino
 en si alguien lo pensó y escribió por qué.
 
-Aquí están las cinco fronteras que el proyecto **no** cruza, cada una con la razón y con
+Aquí están las seis fronteras que el proyecto **no** cruza, cada una con la razón y con
 la condición bajo la cual dejaría de tener sentido. Ninguna es una tarea pendiente que se
-nos olvidó: son cinco decisiones tomadas, y este documento existe para que no se
+nos olvidó: son seis decisiones tomadas, y este documento existe para que no se
 reabran por impulso a tres días de la entrega.
 
 **Congelación de alcance: 28 de agosto.** A partir de esa fecha ningún elemento de esta
@@ -104,13 +104,52 @@ es la propiedad de seguridad, no una etapa temprana de un plan más grande.
 
 ---
 
-## Lo que estas cinco fronteras tienen en común
+## 6. El anclaje se queda en testnet; no sube a mainnet
 
-Ninguna es un límite de esfuerzo. Las cinco son el mismo criterio aplicado a cinco lugares
+**Estado:** decidido. Mainnet es el cambio de una variable, y aun así no se hace.
+
+Conviene precisar qué frontera es esta, porque se confunde con otra. **Base Sepolia ya es
+una cadena pública:** las transacciones son reales, cualquiera las consulta en
+`sepolia.basescan.org` sin pedirnos nada, y el sistema las reporta con
+`verificable_por_terceros: true` y el semáforo en verde. Lo que separa testnet de mainnet
+no es la verificabilidad — es la permanencia y el valor económico.
+
+El ancla **simulada** sí es otra cosa, y esa no se usa en producción: se declara falsa en
+la respuesta HTTP y tiñe el semáforo de ámbar precisamente para que nadie la confunda con
+esto.
+
+El código soporta mainnet de punta a punta: `base` está en `REDES` (chain 8453) y en
+`EXPLORADORES` ([`ancla_evm.py`](../src/agente_cfdi/bitacora/ancla_evm.py),
+[`anclaje.py`](../src/agente_cfdi/bitacora/anclaje.py)). No falta ingeniería.
+
+**Por qué no ahora:** porque cambiar de red **no migra los anclajes existentes**, y ese
+costo es mayor que el beneficio a cuatro días del envío. El contrato es por red y
+`anclar()` es por día e irrepetible por diseño: los anclajes del 17 y del 24 se quedan en
+Sepolia para siempre. Cambiar hoy significa llegar a la entrega con dos o tres días en
+mainnet y el resto del rastro en otra red — la evidencia del ciclo autónomo, que es el
+argumento más fuerte del proyecto, partida entre dos exploradores sin una razón visible.
+
+Se suma que `dueno` es `immutable` y se fija en el constructor
+([`AnclaDeRaices.sol`](../contratos/AnclaDeRaices.sol)): el contrato de mainnet tendría que
+desplegarse desde la misma wallet que firma los anclajes, o el job revierte con
+`NoEsElDueno()` todas las noches. Es un paso más, con dinero real y una dependencia externa,
+para una propiedad que nadie va a comprobar en la evaluación.
+
+**Cuándo cambia:** los testnets se retiran. Base Sepolia no va a existir para siempre, así
+que un ancla ahí es evidencia con fecha de caducidad — y una bitácora cuyo propósito es
+sobrevivir al tiempo no puede depender de una red que no lo hará. El día que haya un
+financiador real tomando decisiones de crédito contra estas raíces, mainnet deja de ser
+cosmético y pasa a ser el soporte del producto. Cuesta alrededor de 1 USD al año. Va
+inmediatamente después del hackathon, junto con Cloud SQL.
+
+## Lo que estas seis fronteras tienen en común
+
+Ninguna es un límite de esfuerzo. Las seis son el mismo criterio aplicado a seis lugares
 distintos: **el sistema no afirma más de lo que puede demostrar.** Una bitácora que no
 sobrevive al reinicio no debe decir «íntegra». Un cliente HTTP no probado contra el sistema
 real no debe presentarse como integrado. Una cadena que no sabe quién escribió no debe
-sugerir que sí. Un CFDI sintético no debe presentarse como timbrado.
+sugerir que sí. Un CFDI sintético no debe presentarse como timbrado. Un ancla simulada no debe pintarse
+del mismo color que una publicada.
 
 Es la misma regla que hace que el semáforo tenga un color gris para «sin cadena que
 verificar» ([3.16](03-manejo-de-estado.md)), y que el sistema se niegue a anclar una cadena
