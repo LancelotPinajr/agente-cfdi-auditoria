@@ -119,7 +119,7 @@ ventana está acotada a una subida, el apagado ordenado la vacía, y `/semaforo`
 en el bloque `respaldo`. No se esconde detrás de una redacción que suene mejor.
 
 ### 3.15 — El invariante de un solo escritor, declarado como ADR ✅
-**Dueño:** Gilfoyle · **Cerrada el 24-ago** — [ADR 0007](adr/0007-dominio-del-candado-y-dominio-de-la-durabilidad.md)
+**Dueño:** Gilfoyle · **Cerrada el 25-ago** — [ADR 0007](adr/0007-dominio-del-candado-y-dominio-de-la-durabilidad.md)
 
 `ADR 0007`: por qué el dominio del candado y el dominio de la durabilidad son distintos,
 por qué `max-instances=1` es una condición de corrección y no una optimización, y qué
@@ -130,7 +130,7 @@ exactamente se rompe si alguien sube ese número creyendo que escala.
 > sin toparse con la explicación.
 
 ### 3.16 — El semáforo distingue «vacía» de «íntegra» ✅
-**Dueño:** Gilfoyle · **Cerrada el 24-ago** — color `gris`, 377 pruebas
+**Dueño:** Gilfoyle · **Cerrada el 25-ago** — color `gris`, 377 pruebas
 
 **Fue la tarea más barata de las seis y la que más importaba.** Una cadena de altura 0
 verifica trivialmente: no hay ningún eslabón que pueda no cuadrar. Antes de 3.16, ese caso
@@ -172,8 +172,8 @@ Cada XML generado se valida contra `cfdv40.xsd` y `TimbreFiscalDigital11.xsd` of
 ## Orden de ejecución
 
 ```
-3.16  ✅ 24-ago  ← el más barato y el que arregló un fallo de honestidad
-3.15  ✅ 24-ago  ← ADR 0007, no tocaba código
+3.16  ✅ 25-ago  ← el más barato y el que arregló un fallo de honestidad
+3.15  ✅ 25-ago  ← ADR 0007, no tocaba código
 3.13  ✅ 26-ago  ← restauración
 3.14  ✅ 26-ago  ← respaldo   (13 y 14 acabaron siendo un solo módulo)
 3.17  ( ½ día )  ← la evidencia contra el servicio real. LO QUE FALTA.
