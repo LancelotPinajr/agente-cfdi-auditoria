@@ -494,6 +494,7 @@ CFF art. 30.
 - [ADR 0006 — Prueba de inclusión y anclaje](docs/adr/0006-anclaje-y-prueba.md)
 - [ADR 0007 — El dominio del candado no es el dominio de la durabilidad](docs/adr/0007-dominio-del-candado-y-dominio-de-la-durabilidad.md) — por qué `--max-instances=1` es corrección y no costo
 - [Manejo de estado](docs/03-manejo-de-estado.md) — tareas 3.13 a 3.18
+- [Alcance y no-objetivos](docs/05-alcance-y-no-objetivos.md) — las cinco fronteras que el sistema no cruza, y por qué
 - [Contrato de datos del expediente](docs/contrato-expediente.md) — qué sale, qué no, y por qué
 - [Datos sintéticos](docs/datos-sinteticos.md) — RFC que no pueden ser de nadie, y huecos conocidos
 - [Frontera con CØRD Fiscal](docs/trabajo-preexistente.md) — declaración verificable
