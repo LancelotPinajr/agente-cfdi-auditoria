@@ -492,6 +492,8 @@ CFF art. 30.
 - [ADR 0004 — Bitácora encadenada y registro de cesiones](docs/adr/0004-bitacora-encadenada.md)
 - [ADR 0005 — Endpoints de ingesta y cesión](docs/adr/0005-endpoints.md)
 - [ADR 0006 — Prueba de inclusión y anclaje](docs/adr/0006-anclaje-y-prueba.md)
+- [ADR 0007 — El dominio del candado no es el dominio de la durabilidad](docs/adr/0007-dominio-del-candado-y-dominio-de-la-durabilidad.md) — por qué `--max-instances=1` es corrección y no costo
+- [Manejo de estado](docs/03-manejo-de-estado.md) — tareas 3.13 a 3.18
 - [Contrato de datos del expediente](docs/contrato-expediente.md) — qué sale, qué no, y por qué
 - [Datos sintéticos](docs/datos-sinteticos.md) — RFC que no pueden ser de nadie, y huecos conocidos
 - [Frontera con CØRD Fiscal](docs/trabajo-preexistente.md) — declaración verificable

@@ -31,10 +31,18 @@ dominio de la durabilidad →  fuera de la instancia  →  NO resuelto  ← esto
 
 ## La decisión: snapshot a GCS, no base gestionada
 
-**Descartado — Cloud SQL (Postgres).** Es la respuesta "correcta" de libro y la que más
-puntuaría en abstracto. Pero la capa de persistencia es `sqlite3` crudo, no un ORM:
-migrarla a cuatro días de la congelación pone en riesgo las 375 pruebas para ganar un
-punto de estilo. Se declara como el siguiente paso, no se hace ahora.
+**Diferido — Cloud SQL (Postgres).** Hay que ser preciso sobre cuánto falta, porque el
+proyecto está más cerca de lo que parecía: la migración **ya está escrita** en
+[`migraciones/001_bitacora.sql`](../migraciones/001_bitacora.sql), con
+`pg_advisory_xact_lock(hashtext(inquilino))` —por inquilino, o sea que sí escala
+horizontalmente— y triggers que rechazan `UPDATE` y `DELETE`.
+
+Lo que falta es la capa de Python: **16 puntos de acoplamiento a `sqlite3`** en dos
+archivos, de cuatro clases (`connect`, `Row`, `IntegrityError`, `BEGIN IMMEDIATE`).
+Cuatro costuras es poco. Pero esa ruta **no está ejercitada por pruebas** —hueco ya
+declarado en ADR 0004— y ejercitarla exige levantar un servidor en CI. A cuatro días de
+la congelación es abrir un frente nuevo por un problema que el snapshot ya resuelve.
+Se difiere, no se descarta: es el primer trabajo de después del hackathon.
 
 **Descartado — volumen GCS montado (FUSE) con el archivo SQLite encima.** GCS FUSE no
 implementa el bloqueo de archivos de POSIX que SQLite necesita. Bajo escritura concurrente
@@ -73,8 +81,8 @@ una cesión ya confirmada.
 > — se prueba, no se supone. Un fallo de GCS deja el sistema degradado y alertando, nunca
 > con una escritura perdida ni una petición caída.
 
-### 3.15 — El invariante de un solo escritor, declarado como ADR
-**Dueño:** Gilfoyle · **Estimado:** dos horas
+### 3.15 — El invariante de un solo escritor, declarado como ADR ✅
+**Dueño:** Gilfoyle · **Cerrada el 24-ago** — [ADR 0007](adr/0007-dominio-del-candado-y-dominio-de-la-durabilidad.md)
 
 `ADR 0007`: por qué el dominio del candado y el dominio de la durabilidad son distintos,
 por qué `max-instances=1` es una condición de corrección y no una optimización, y qué
@@ -84,13 +92,16 @@ exactamente se rompe si alguien sube ese número creyendo que escala.
 > comentario de `--max-instances`. Alguien que herede el proyecto no puede subir la bandera
 > sin toparse con la explicación.
 
-### 3.16 — El semáforo distingue «vacía» de «íntegra»
-**Dueño:** Gilfoyle · **Estimado:** dos horas
+### 3.16 — El semáforo distingue «vacía» de «íntegra» ✅
+**Dueño:** Gilfoyle · **Cerrada el 24-ago** — color `gris`, 377 pruebas
 
-**Esta es la tarea que más importa de las seis y la más barata.** Una cadena de altura 0
-verifica trivialmente: no hay ningún eslabón que pueda no cuadrar. Hoy, si la bitácora se
-pierde, el semáforo diría **verde** sobre una cadena vacía. Verde por haberlo perdido todo
-es exactamente el fallo que este producto existe para no cometer.
+**Fue la tarea más barata de las seis y la que más importaba.** Una cadena de altura 0
+verifica trivialmente: no hay ningún eslabón que pueda no cuadrar. Antes de 3.16, ese caso
+caía en el ámbar **«ÍNTEGRA, SIN PUBLICAR»**, con un detalle que afirmaba que los eslabones
+recalculables cuadraban. Cuadraban cero. Afirmar integridad justo después de haberlo
+perdido todo es exactamente el fallo que este producto existe para no cometer.
+
+Se agregó el color `gris` / «SIN CADENA QUE VERIFICAR» — no alarma, pero tampoco confirma.
 
 > **Criterio de aceptación:** con la bitácora vacía y sin snapshot que restaurar, el
 > semáforo devuelve un color **distinto de verde** y un texto que dice que no hay cadena

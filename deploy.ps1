@@ -43,10 +43,19 @@ Write-Host "============================================="
 # gcloud services enable artifactregistry.googleapis.com
 
 # Deploy usando source (Cloud Build compila el Dockerfile automáticamente)
-# --max-instances=1 NO es una optimizacion de costo: la bitacora es SQLite sobre
-# el disco efimero de la instancia (src/agente_cfdi/api/dependencias.py). Con dos
-# instancias vivas cada una escribiria su propia cadena y la punta se bifurcaria.
-# Es un parche honesto hasta que haya persistencia compartida, no la solucion.
+# --max-instances=1 NO es una optimizacion de costo: es una CONDICION DE
+# CORRECCION. Ver docs/adr/0007-dominio-del-candado-y-dominio-de-la-durabilidad.md
+#
+# La bitacora es SQLite sobre el disco efimero de la instancia
+# (src/agente_cfdi/api/dependencias.py). Con dos instancias vivas cada una
+# escribiria contra su propio archivo y la punta se bifurcaria EN SILENCIO:
+# ninguna de las dos daria error, las dos verificarian, y al cierre se anclaria
+# una raiz que solo cubre la mitad de los registros. Es el peor fallo que puede
+# tener este producto: uno que produce evidencia de aspecto correcto.
+#
+# NO SUBAS ESTE NUMERO sin leer el ADR 0007 primero. El dia que la bitacora
+# corra sobre PostgreSQL, pg_advisory_xact_lock es por inquilino y este
+# invariante deja de ser necesario. Hoy no.
 #
 # AGENTE_CFDI_BITACORA apunta a /tmp porque es el unico lugar que Cloud Run
 # garantiza escribible. Se pierde al reciclar la instancia: la cadena de esta
