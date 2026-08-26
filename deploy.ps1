@@ -33,6 +33,18 @@ $ANCLA_RED = "base-sepolia"
 $ANCLA_CONTRATO = "0xe76b981159307a79c77B29796F59087D6c13d974"
 $LLAVE_SECRETO = "WALLET_PRIVATE_KEY"
 
+# --- Respaldo de la bitacora (tareas 3.13 y 3.14) --------------------------
+#
+# La cubeta tiene que existir ANTES del primer despliegue que use esta
+# variable. Se crea una sola vez con ./configurar_respaldo.ps1, que ademas le
+# activa el versionado y le da permiso a la cuenta de servicio.
+#
+# Si la cubeta no existe el servicio NO se cae: arranca, escribe en local y
+# reporta `degradado` en /semaforo con el error de GCS. Eso es deliberado
+# —perder la copia no debe tumbar el servicio— pero significa que el fallo se
+# ve en el semaforo y no en el despliegue. Revisalo despues de desplegar.
+$CUBETA_RESPALDO = "$PROJECT_ID-bitacora"
+
 Write-Host "============================================="
 Write-Host " Desplegando Agente CFDI a Cloud Run..."
 Write-Host " Cuenta: $ACCOUNT"
@@ -58,8 +70,13 @@ Write-Host "============================================="
 # invariante deja de ser necesario. Hoy no.
 #
 # AGENTE_CFDI_BITACORA apunta a /tmp porque es el unico lugar que Cloud Run
-# garantiza escribible. Se pierde al reciclar la instancia: la cadena de esta
-# demo no sobrevive un despliegue, y eso se declara en la evidencia.
+# garantiza escribible. /tmp SIGUE perdiendose al reciclar la instancia: lo que
+# cambio con 3.13 y 3.14 es que ya no importa, porque AGENTE_CFDI_RESPALDO
+# replica el archivo a GCS tras cada confirmacion y el arranque lo restaura.
+#
+# Lo que NO resuelve: la ventana entre una confirmacion y su subida. Un SIGKILL
+# ahi se lleva esas escrituras. Esta acotada a una subida y esta declarada en
+# src/agente_cfdi/bitacora/respaldo.py; /semaforo la reporta en `respaldo`.
 #
 # AGENTE_CFDI_SEMILLA tiene que coincidir con la que usa tools/demo.py. Si no,
 # los libros sinteticos y los CFDI hablan de empresas distintas y TODO sale
@@ -67,11 +84,16 @@ Write-Host "============================================="
 # preguntando por facturas que nunca vio.
 #
 # --min-instances=1 mantiene la instancia viva entre un cierre y el siguiente.
-# Sin esto Cloud Run la recicla cuando no hay trafico y /tmp se borra: el cierre
-# de manana arrancaria en altura 0 y el anclaje de hoy habria desaparecido, con
-# lo cual el criterio de 2.9 —"dos dias seguidos, dos anclajes"— no se podria
-# cumplir nunca. Es un puente, no la solucion: la instancia tambien se recicla
-# por mantenimiento. Cuesta una instancia encendida todo el mes.
+# Se puso como PUENTE mientras /tmp era el unico sitio donde vivia la cadena:
+# sin esto Cloud Run reciclaba la instancia sin trafico, /tmp se borraba, y el
+# cierre de manana arrancaba en altura 0.
+#
+# Con 3.13 y 3.14 ese puente ya no carga peso: la cadena se restaura del
+# snapshot al arrancar, asi que un reciclaje deja de ser una perdida. Se
+# mantiene en 1 a proposito hasta que 3.17 lo demuestre contra el servicio real
+# —quitar la red antes de comprobar que el suelo aguanta es como se pierde una
+# demo— y en cuanto esa evidencia exista, esto puede bajar a 0 y ahorrarse una
+# instancia encendida todo el mes.
 gcloud run deploy $SERVICE_NAME `
     --source . `
     --project $PROJECT_ID `
@@ -79,7 +101,7 @@ gcloud run deploy $SERVICE_NAME `
     --allow-unauthenticated `
     --max-instances=1 `
     --min-instances=1 `
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=global,GOOGLE_GENAI_USE_VERTEXAI=1,AGENTE_CFDI_BITACORA=/tmp/bitacora.db,AGENTE_CFDI_SEMILLA=20260814,AGENTE_CFDI_ANCLA_RED=$ANCLA_RED,AGENTE_CFDI_ANCLA_CONTRATO=$ANCLA_CONTRATO,AGENTE_CFDI_LLAVE_SECRETO=$LLAVE_SECRETO"
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_REGION=global,GOOGLE_GENAI_USE_VERTEXAI=1,AGENTE_CFDI_BITACORA=/tmp/bitacora.db,AGENTE_CFDI_SEMILLA=20260814,AGENTE_CFDI_ANCLA_RED=$ANCLA_RED,AGENTE_CFDI_ANCLA_CONTRATO=$ANCLA_CONTRATO,AGENTE_CFDI_LLAVE_SECRETO=$LLAVE_SECRETO,AGENTE_CFDI_RESPALDO=gs://$CUBETA_RESPALDO/bitacora/bitacora.db"
 
 if ($?) {
     Write-Host "`n✅ ¡Despliegue exitoso!"

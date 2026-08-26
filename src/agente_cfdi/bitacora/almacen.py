@@ -47,7 +47,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping
 
 from ..dominio.canonico import canonicalizar
 from .anclaje import Ancla, Constancia
@@ -61,6 +61,7 @@ from .cadena import (
     verificar_cadena,
 )
 from .eventos import Evento, esquema_de
+from .respaldo import Instantanea, tomar_instantanea
 
 ESQUEMA_SQL = """
 CREATE TABLE IF NOT EXISTS bitacora_cadena (
@@ -197,7 +198,13 @@ class Bitacora:
     producción, está en `migraciones/001_bitacora.sql`.
     """
 
-    def __init__(self, conexion: sqlite3.Connection, *, inquilino: str) -> None:
+    def __init__(
+        self,
+        conexion: sqlite3.Connection,
+        *,
+        inquilino: str,
+        al_confirmar: "Callable[[Bitacora], None] | None" = None,
+    ) -> None:
         if not inquilino:
             raise ValueError("la bitácora exige un inquilino")
         self._cx = conexion
@@ -207,6 +214,12 @@ class Bitacora:
         # no se puede pedir a mano.
         self._cx.isolation_level = None
         self.inquilino = inquilino
+        self._al_confirmar = al_confirmar
+        self.ultimo_fallo_al_confirmar: str | None = None
+        """El último fallo del gancho de post-confirmación, si lo hubo.
+
+        Ver `_notificar_confirmacion`: se registra en vez de propagarse.
+        """
 
     @classmethod
     def en_memoria(cls, inquilino: str = "demo") -> "Bitacora":
@@ -405,6 +418,15 @@ class Bitacora:
         """Recorre la cadena entera. Devuelve cuántos eslabones se recalcularon."""
         return verificar_cadena(self.eslabones(), self.inquilino)
 
+    def instantanea(self) -> Instantanea:
+        """Copia consistente del archivo, con la altura que tiene ahora.
+
+        Se toma de forma síncrona —tiene que ser así, la conexión se cierra al
+        terminar la petición— y quien la reciba decide cuándo subirla. Ver
+        `bitacora/respaldo.py` para por qué esa asimetría es deliberada.
+        """
+        return tomar_instantanea(self._cx, altura=self.altura())
+
     def altura(self) -> int:
         fila = self._cx.execute(
             "SELECT COUNT(*) AS n FROM bitacora_cadena WHERE inquilino = ?",
@@ -583,7 +605,32 @@ class Bitacora:
         return Anexado(posicion=posicion, hash_registro=hash_registro, canonico=canonico)
 
     def _transaccion(self):
-        return _Transaccion(self._cx)
+        return _Transaccion(self._cx, al_confirmar=self._notificar_confirmacion)
+
+    def _notificar_confirmacion(self) -> None:
+        """Avisa de una confirmación, sin que ese aviso pueda romper nada.
+
+        Aquí cuelga la réplica de la bitácora a un almacén externo (tarea 3.14).
+        El gancho corre **después** del `COMMIT`, así que la escritura ya es
+        firme y ya soltó el candado: el trabajo de replicar no retrasa a la
+        siguiente petición que quiera escribir.
+
+        **Por qué se traga la excepción.** Llegado este punto la transacción ya
+        está confirmada y es irreversible. Dejar que un fallo del gancho suba
+        convertiría una escritura exitosa en un 500, y el cliente reintentaría
+        una operación que sí ocurrió. Un almacén caído tiene que dejar el
+        sistema degradado y avisando —eso lo hace el replicador, que registra su
+        propio fallo— nunca perdiendo escrituras ni tirando peticiones.
+
+        No es silencio: el fallo queda en `ultimo_fallo_al_confirmar` y el
+        replicador lo anota en el log por su cuenta.
+        """
+        if self._al_confirmar is None:
+            return
+        try:
+            self._al_confirmar(self)
+        except Exception as fallo:  # noqa: BLE001 - ver el docstring
+            self.ultimo_fallo_al_confirmar = f"{type(fallo).__name__}: {fallo}"
 
 
 class _CarreraDeCesion(RuntimeError):
@@ -602,8 +649,14 @@ class _Transaccion:
     `BEGIN` normal la lectura ocurre fuera del candado.
     """
 
-    def __init__(self, conexion: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        conexion: sqlite3.Connection,
+        *,
+        al_confirmar: Callable[[], None] | None = None,
+    ) -> None:
         self._cx = conexion
+        self._al_confirmar = al_confirmar
 
     def __enter__(self) -> sqlite3.Connection:
         self._cx.execute("BEGIN IMMEDIATE")
@@ -612,6 +665,11 @@ class _Transaccion:
     def __exit__(self, tipo, valor, rastro) -> bool:
         if tipo is None:
             self._cx.execute("COMMIT")
+            # Después del COMMIT y no antes: lo que se replique tiene que ser un
+            # estado que ya es firme. Y fuera del candado, que el COMMIT acaba
+            # de soltar.
+            if self._al_confirmar is not None:
+                self._al_confirmar()
         else:
             self._cx.execute("ROLLBACK")
         return False

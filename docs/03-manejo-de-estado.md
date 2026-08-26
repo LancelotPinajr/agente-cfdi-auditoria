@@ -58,28 +58,65 @@ esto sea seguro — y esa dependencia hay que declararla, no esconderla (3.15).
 
 ## Tareas
 
-### 3.13 — Restauración de la bitácora al arranque
-**Dueño:** Dinesh · **Estimado:** medio día
+### 3.13 — Restauración de la bitácora al arranque ✅
+**Dueño:** Dinesh · **Cerrada el 26-ago** — [`bitacora/respaldo.py`](../src/agente_cfdi/bitacora/respaldo.py)
 
 Al iniciar, si la ruta de la bitácora no existe, el servicio descarga el último snapshot
-de GCS antes de atender la primera petición.
+antes de atender la primera petición. Va en el arranque y no en el primer acceso perezoso:
+si no, una escritura podría ganarle y anexar sobre una cadena vacía.
 
 > **Criterio de aceptación:** se borra `/tmp/bitacora.db`, se reinicia el servicio, y
 > `GET /auditoria/semaforo` devuelve la **misma altura y la misma raíz del día** que antes
 > del reinicio, sin haber corrido el ciclo. Si no hay snapshot, arranca vacía y lo dice en
 > el log — nunca falla en silencio.
 
-### 3.14 — Respaldo consistente después de cada escritura confirmada
-**Dueño:** Gilfoyle · **Estimado:** medio día
+**Cómo se cumplió.** `test_la_cadena_sobrevive_a_que_se_borre_la_ruta` borra el archivo,
+levanta el servicio de nuevo y comprueba que la prueba de Merkle del mismo folio sale con
+la **misma raíz, misma posición, misma punta y misma altura**. Se usa la raíz de
+`/auditoria/prueba/{uuid}` y no la del semáforo porque el semáforo no la expone — el
+endpoint que menciona el criterio es `/semaforo`, no `/auditoria/semaforo`.
 
-Tras cada transacción confirmada, `Connection.backup()` produce un snapshot y se sube a
-GCS. La subida ocurre **fuera** del candado de escritura: un fallo de red no puede tumbar
-una cesión ya confirmada.
+Tres cosas que el criterio no pedía y están:
+
+- Un snapshot que no pasa `PRAGMA integrity_check` **no se instala**. Arranca vacía y lo
+  dice. Instalar un archivo corrupto y descubrirlo en la primera consulta sería cambiar
+  una pérdida ruidosa por una silenciosa.
+- No se restaura encima de una bitácora que ya existe: un reinicio del proceso dentro de
+  la misma instancia no es una instancia nueva.
+- El semáforo ya no dice sólo «está vacía». Dice **por qué**: sin respaldo configurado,
+  sin snapshot, snapshot corrupto o almacén caído. Eran cuatro problemas distintos que se
+  veían igual.
+
+### 3.14 — Respaldo consistente después de cada escritura confirmada ✅
+**Dueño:** Gilfoyle · **Cerrada el 26-ago** — 20 pruebas nuevas, 397 en total
+
+Tras cada transacción confirmada, `Connection.backup()` produce un snapshot y se sube. La
+subida ocurre **fuera** del candado de escritura: un fallo de red no puede tumbar una
+cesión ya confirmada.
 
 > **Criterio de aceptación:** el objeto en GCS cambia de generación tras cada commit. Se
 > mata el proceso a media subida y el snapshot anterior sigue siendo válido y restaurable
 > — se prueba, no se supone. Un fallo de GCS deja el sistema degradado y alertando, nunca
 > con una escritura perdida ni una petición caída.
+
+**Una corrección al enunciado, y por qué importa.** «La subida ocurre fuera del candado»
+admite una implementación que devuelve el problema: si cada commit dispara su propia
+subida, dos subidas se traslapan y pueden llegar en orden inverso. El snapshot de altura
+41 aterriza después del de 42 y queda como vigente. La restauración vuelve entonces a una
+cadena más corta **sin error y sin log**, que verifica perfecto porque es un prefijo
+válido de sí misma. Es el fallo del ADR 0007: no uno que rompa, uno que produce evidencia
+de aspecto correcto.
+
+Por eso las subidas pasan por **un solo hilo consumidor**, y la instantánea pendiente se
+reemplaza en vez de encolarse — no se pierde nada, cada instantánea es el archivo completo.
+`test_las_subidas_llegan_al_almacen_en_orden_de_confirmacion` lo fija.
+
+**La ventana que sí existe, declarada.** La instantánea se toma síncrona tras el commit
+(la conexión se cierra al terminar la petición) pero la subida es asíncrona. Un `SIGKILL`
+entre las dos se lleva esas escrituras. «Nunca con una escritura perdida» sólo es
+literalmente cierto con subida síncrona, que es lo que «fuera del candado» descarta. La
+ventana está acotada a una subida, el apagado ordenado la vacía, y `/semaforo` la reporta
+en el bloque `respaldo`. No se esconde detrás de una redacción que suene mejor.
 
 ### 3.15 — El invariante de un solo escritor, declarado como ADR ✅
 **Dueño:** Gilfoyle · **Cerrada el 24-ago** — [ADR 0007](adr/0007-dominio-del-candado-y-dominio-de-la-durabilidad.md)
@@ -135,13 +172,23 @@ Cada XML generado se valida contra `cfdv40.xsd` y `TimbreFiscalDigital11.xsd` of
 ## Orden de ejecución
 
 ```
-3.16  (2 h)   ← primero: es el más barato y el que arregla un fallo de honestidad
-3.15  (2 h)   ← se puede escribir en paralelo, no toca código
-3.13  (½ día) ← restauración
-3.14  (½ día) ← respaldo   (13 y 14 son una sola pieza, pero 13 se prueba sola)
-3.17  (½ día) ← la evidencia que lo demuestra
-3.18  (½ día) ← si sobra tiempo antes del 28
+3.16  ✅ 24-ago  ← el más barato y el que arregló un fallo de honestidad
+3.15  ✅ 24-ago  ← ADR 0007, no tocaba código
+3.13  ✅ 26-ago  ← restauración
+3.14  ✅ 26-ago  ← respaldo   (13 y 14 acabaron siendo un solo módulo)
+3.17  ( ½ día )  ← la evidencia contra el servicio real. LO QUE FALTA.
+3.18  ( ½ día )  ← si sobra tiempo antes del 28
 ```
+
+**Dónde está la línea entre 3.13/3.14 y 3.17.** Lo cerrado está probado *localmente*: 397
+pruebas, incluidas las que borran el archivo y lo restauran. Lo que **no** está probado es
+el mismo recorrido contra Cloud Run y GCS de verdad — que es exactamente lo que 3.17 pide y
+por qué sigue abierta. Hasta que esa evidencia exista, lo honesto es decir que el mecanismo
+funciona y que todavía no se ha visto sobrevivir a un despliegue real.
+
+Por la misma razón `--min-instances=1` sigue en 1. Con el snapshot ya no carga peso, pero
+quitar la red antes de comprobar que el suelo aguanta es como se pierde una demo. En cuanto
+3.17 dé la evidencia, puede bajar a 0 y ahorrar una instancia encendida todo el mes.
 
 Dos días de trabajo repartidos entre dos personas, con margen antes de la congelación.
 
@@ -161,3 +208,8 @@ Se declara para no prometer de más:
   Postgres con `pg_advisory_lock`, y es trabajo de después del hackathon.
 - **No hay autenticación por financiador.** El token distingue quién puede escribir, no
   quién es. Tampoco tiene tarea, y a cuatro días de la congelación no debe tenerla.
+- **La cola entre una confirmación y su subida se pierde con un `SIGKILL`.** Acotada a una
+  subida, vaciada en el apagado ordenado, reportada en `/semaforo`. Cerrarla del todo exige
+  subida síncrona —un viaje de red por commit— o escribir en Postgres directamente, que es
+  lo mismo que resuelve el escalamiento horizontal. Es el segundo argumento para la misma
+  migración, no un problema aparte.

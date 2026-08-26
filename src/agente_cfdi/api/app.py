@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import io
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -51,10 +52,14 @@ from .dependencias import (
     bitacora_actual,
     fuente_actual,
     inquilino_configurado,
+    replicador_actual,
+    restauracion_del_arranque,
+    restaurar_al_arranque,
 )
 from .esquemas import (
     ConstanciaDeAnclaje,
     EstadoDeCesion,
+    EstadoDelRespaldo,
     LecturaRechazada,
     PasoDeLaRuta,
     PeticionDeCesion,
@@ -96,10 +101,36 @@ decisión comercial que es suya: hay quien financia cartera con descuento
 sabiendo el riesgo. Lo que no es aceptable es que no se entere.
 """
 
+@asynccontextmanager
+async def ciclo_de_vida(_: FastAPI):
+    """Restaura la bitácora antes de atender la primera petición (tarea 3.13).
+
+    Va en el arranque y no en la primera consulta perezosa por una razón de
+    orden: si la restauración ocurriera al primer acceso, una petición de
+    escritura podría ganarle y anexar sobre una cadena vacía. Se restauraría
+    después *encima* de esa escritura, o peor, se descartaría el snapshot por
+    encontrar la ruta ya ocupada. El arranque es el único momento en que se sabe
+    que nadie más ha tocado el archivo.
+
+    El apagado vacía la cola de réplica. No cierra la ventana de pérdida —un
+    `SIGKILL` no ejecuta esto— pero sí la del apagado ordenado, que es el caso
+    de un despliegue nuevo y por lo tanto el caso frecuente.
+    """
+    restaurar_al_arranque()
+    replicador_actual()  # levanta el hilo antes de la primera escritura
+    try:
+        yield
+    finally:
+        replicador = replicador_actual()
+        if replicador is not None:
+            replicador.detener()
+
+
 app = FastAPI(
     title="Agente de Aseguramiento y Cesión de CFDI",
     description="Audita CFDI contra los libros de la PYME y detecta doble cesión.",
     version="0.2.0",
+    lifespan=ciclo_de_vida,
 )
 
 
@@ -722,6 +753,66 @@ def cierre_diario(
     )
 
 
+def estado_del_respaldo() -> EstadoDelRespaldo:
+    """Cómo llegó aquí la cadena y si su copia está al día (3.13 y 3.14)."""
+    restauracion = restauracion_del_arranque()
+    replicador = replicador_actual()
+    return EstadoDelRespaldo(
+        restauracion=restauracion.estado if restauracion else "sin_respaldo",
+        detalle=(
+            restauracion.detalle
+            if restauracion
+            else "el arranque no registró ninguna restauración"
+        ),
+        destino=replicador.descripcion if replicador else None,
+        generacion=restauracion.generacion if restauracion else None,
+        altura_restaurada=(
+            restauracion.altura if restauracion and restauracion.restaurada else None
+        ),
+        subido_en=restauracion.subido_en if restauracion else None,
+        altura_replicada=(
+            replicador.altura_replicada
+            if replicador and replicador.altura_replicada >= 0
+            else None
+        ),
+        subidas=replicador.subidas if replicador else 0,
+        degradado=replicador.degradado if replicador else False,
+        ultimo_error=replicador.ultimo_error if replicador else None,
+    )
+
+
+def _por_que_esta_vacia() -> str:
+    """La razón concreta de que no haya cadena, no una genérica.
+
+    Antes de 3.13 solo se podía decir «si antes hubo registros, se perdieron con
+    la instancia», porque no había forma de saber más. Ahora sí la hay, y la
+    diferencia importa: «no hay respaldo configurado» es un problema de
+    despliegue, «el snapshot no pasó integrity_check» es un problema de datos, y
+    «el almacén no respondió» es un problema de red. Las tres se veían igual.
+    """
+    restauracion = restauracion_del_arranque()
+    if restauracion is None or restauracion.estado == "sin_respaldo":
+        return (
+            "no hay respaldo configurado, así que si antes hubo registros se "
+            "perdieron al reciclarse la instancia"
+        )
+    if restauracion.estado == "sin_snapshot":
+        return f"{restauracion.detalle}: nunca se ha replicado nada que restaurar"
+    if restauracion.estado == "corrupta":
+        return (
+            f"se encontró un snapshot pero NO se instaló porque no pasó la "
+            f"revisión de integridad ({restauracion.detalle})"
+        )
+    if restauracion.estado == "fallo":
+        return f"no se pudo consultar el respaldo al arrancar ({restauracion.detalle})"
+    if restauracion.restaurada:
+        return (
+            f"se restauró el snapshot {restauracion.generacion} y venía vacío: "
+            f"la copia se tomó antes de la primera escritura"
+        )
+    return restauracion.detalle
+
+
 @app.get("/semaforo", response_model=Semaforo)
 def semaforo(
     dia: str | None = None, bitacora: Bitacora = Depends(bitacora_actual)
@@ -731,7 +822,18 @@ def semaforo(
     Recorre la cadena entera y reporta un color. Es caro a propósito: quien mira
     el semáforo quiere la respuesta de verdad, no una caché. La sonda barata para
     Cloud Run es `/salud`, que no verifica nada.
+
+    El color sale de la cadena; el bloque `respaldo` sale de cómo llegó aquí esa
+    cadena. Se cuelga después y en un solo sitio para que ninguna rama pueda
+    olvidarlo: un semáforo que omitiera que la cadena fue restaurada estaría
+    contando media historia justo donde más se mira.
     """
+    resultado = _evaluar_semaforo(dia, bitacora)
+    resultado.respaldo = estado_del_respaldo()
+    return resultado
+
+
+def _evaluar_semaforo(dia: str | None, bitacora: Bitacora) -> Semaforo:
     objetivo = dia or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     altura = bitacora.altura()
 
@@ -753,8 +855,7 @@ def semaforo(
                 "la bitácora está vacía: no hay ningún eslabón que recalcular. "
                 "Una cadena de altura cero verifica trivialmente, así que esto "
                 "NO es una afirmación de integridad — es la ausencia de datos "
-                "sobre los que afirmar nada. Si antes hubo registros, se "
-                "perdieron con la instancia"
+                "sobre los que afirmar nada. " + _por_que_esta_vacia()
             ),
             altura=0,
             verificados=0,

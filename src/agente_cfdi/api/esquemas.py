@@ -208,6 +208,42 @@ class RespuestaDeCierre(BaseModel):
     detalle: str
 
 
+class EstadoDelRespaldo(BaseModel):
+    """De dónde salió esta cadena y si su copia está al día (tareas 3.13 y 3.14).
+
+    Va colgado del semáforo porque responde la pregunta que el semáforo deja
+    abierta: «íntegra» dice que los eslabones que hay cuadran entre sí, no dice
+    **cuántos debería haber**. Una cadena restaurada de un snapshot viejo es
+    íntegra y le faltan registros. Las dos cosas son ciertas a la vez y hay que
+    poder verlas juntas.
+
+    `degradado` es la señal que importa operativamente: la escritura local está
+    confirmada pero la copia externa no se pudo actualizar. No invalida nada de
+    lo que el semáforo afirma —la cadena sigue siendo la que es— pero significa
+    que el próximo reciclaje de instancia sí se lleva lo que no se replicó.
+    """
+
+    restauracion: str
+    """`sin_respaldo`, `ya_existia`, `sin_snapshot`, `restaurada`, `corrupta` o `fallo`."""
+
+    detalle: str
+    destino: str | None = None
+    """Legible; nunca credenciales. `None` si no hay respaldo configurado."""
+
+    generacion: str | None = None
+    """La generación del snapshot que se restauró. `None` si no se restauró."""
+
+    altura_restaurada: int | None = None
+    subido_en: str | None = None
+
+    altura_replicada: int | None = None
+    """Hasta qué altura llegó la última copia subida con éxito en este proceso."""
+
+    subidas: int = 0
+    degradado: bool = False
+    ultimo_error: str | None = None
+
+
 class Semaforo(BaseModel):
     """El estado de integridad de un vistazo (tarea 3.11).
 
@@ -257,3 +293,6 @@ class Semaforo(BaseModel):
     ancla: ConstanciaDeAnclaje | None = None
     enlace_al_explorador: str | None = None
     """`None` cuando no hay dónde comprobarlo. No se inventa una URL."""
+
+    respaldo: EstadoDelRespaldo | None = None
+    """De dónde salió la cadena y si su copia está al día. Ver la clase."""

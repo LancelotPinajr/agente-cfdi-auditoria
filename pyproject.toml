@@ -44,6 +44,12 @@ agente = ["google-adk>=2.7", "python-dotenv>=1.0"]
 # prometió. Mismo criterio que con pydantic.
 anclaje = ["web3>=7.0", "eth-account>=0.13"]
 
+# El respaldo de la bitácora a GCS (3.13 y 3.14). Va aparte por la misma razón
+# que el anclaje: `RespaldoEnDirectorio` ejercita exactamente el mismo camino de
+# código —serializar, subir, recuperar, restaurar— así que las pruebas prueban
+# el mecanismo de verdad sin necesitar el SDK de Google Cloud ni credenciales.
+respaldo = ["google-cloud-storage>=3.0"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
