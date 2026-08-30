@@ -84,3 +84,22 @@ jobs:
           done
 
           python tools/demo.py
+
+  agente:
+    # Las herramientas se prueban sin ADK a propósito, y eso deja un hueco: que
+    # ADK las ACEPTE no lo prueba nadie. Si una firma no le gusta, el fallo
+    # aparece al construir el agente — o sea, al arrancar el contenedor.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar con ADK
+        run: pip install -e ".[dev,agente]"
+
+      - name: ADK acepta las herramientas
+        run: python tools/verificar_agente.py

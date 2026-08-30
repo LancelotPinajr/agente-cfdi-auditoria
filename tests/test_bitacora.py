@@ -465,3 +465,87 @@ def test_un_eslabon_con_hash_de_otro_tamano_se_rechaza():
     malo = Eslabon(posicion=0, hash_registro=b"corto", hash_anterior=genesis("t"))
     with pytest.raises(CadenaRota):
         verificar_cadena([malo], "t")
+
+
+# --------------------------------------------------------------------------- #
+# 2.13 — cincuenta inserciones concurrentes
+# --------------------------------------------------------------------------- #
+
+INSERCIONES_CONCURRENTES = 50
+
+
+def folio(i: int) -> str:
+    """Cincuenta folios distintos, con el formato que exige el lector."""
+    return f"9F2C1A88-FB09-47F8-B5F9-6DD1C688{i:04X}"
+
+
+def test_cincuenta_inserciones_concurrentes_dejan_la_cadena_integra(tmp_path):
+    """El criterio 2.13 del plan: «50 inserciones concurrentes dejan la cadena
+    íntegra».
+
+    Esto no es lo mismo que la prueba de doble cesión de arriba. Allá cincuenta
+    peticiones pelean por **un** recurso y la respuesta correcta es que gane una;
+    aquí cincuenta escrituras **legítimas** entran a la vez y las cincuenta deben
+    quedar, cada una en su posición y todas enlazadas.
+
+    El fallo que busca es la bifurcación: dos hilos que leen la misma punta,
+    calculan `hash_anterior` contra ella y escriben ambos en la posición *n*. La
+    cadena resultante verifica por tramos pero tiene dos historias, y el árbol
+    de Merkle del día produce una raíz que no corresponde a lo que pasó. Es el
+    bug que el plan describe como «el que aparece frente al jurado», y por eso
+    se prueba con la barrera: sin ella los hilos se turnan solos y la carrera
+    nunca ocurre.
+
+    Se exigen tres cosas, y cada una delata un fallo distinto:
+
+    - **Ninguna caída.** Una escritura legítima que muere por contención es un
+      folio que el operador cree cedido y no está.
+    - **Posiciones 0..49 sin repetir ni saltar.** Un hueco o un duplicado es la
+      bifurcación, aunque cada tramo verifique por separado.
+    - **La cadena recalcula entera.** Es la comprobación de que los cincuenta
+      eslabones enlazan de verdad y no solo que las filas están ahí.
+    """
+    ruta = tmp_path / "bitacora.db"
+    fabrica = lambda cx: Bitacora(cx, inquilino="QZU000000D18")
+    fabrica(sqlite3.connect(ruta)).migrar()
+
+    listos = threading.Barrier(INSERCIONES_CONCURRENTES)
+    posiciones: list[int] = []
+    fallidas: list[Exception] = []
+    cerrojo = threading.Lock()
+
+    def anexar(quien: int) -> None:
+        # El timeout es generoso a propósito: con cincuenta hilos peleando por
+        # el candado de escritura, uno corto haría fallar la prueba por
+        # impaciencia y no por un defecto de la cadena.
+        propia = fabrica(sqlite3.connect(ruta, timeout=30))
+        listos.wait()
+        try:
+            anexado = propia.anexar(
+                Evento.CFDI_AUDITADO,
+                auditoria(uuid=folio(quien), total=f"{1000 + quien}.00"),
+            )
+        except Exception as exc:  # noqa: BLE001 — se reporta, no se traga
+            with cerrojo:
+                fallidas.append(exc)
+            return
+        with cerrojo:
+            posiciones.append(anexado.posicion)
+
+    hilos = [
+        threading.Thread(target=anexar, args=(i,))
+        for i in range(INSERCIONES_CONCURRENTES)
+    ]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join()
+
+    assert not fallidas, f"escrituras caídas por contención: {fallidas}"
+    assert sorted(posiciones) == list(range(INSERCIONES_CONCURRENTES)), (
+        "posiciones repetidas o con huecos: la cadena se bifurcó"
+    )
+
+    final = fabrica(sqlite3.connect(ruta))
+    assert final.altura() == INSERCIONES_CONCURRENTES
+    assert final.verificar() == INSERCIONES_CONCURRENTES

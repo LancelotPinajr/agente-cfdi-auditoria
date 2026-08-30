@@ -35,6 +35,25 @@ from typing import Protocol, runtime_checkable
 
 PREFIJO_SIMULADA = "simulada:"
 
+EXPLORADORES = {
+    "base-sepolia": "https://sepolia.basescan.org/tx/{}",
+    "base": "https://basescan.org/tx/{}",
+    "polygon-amoy": "https://amoy.polygonscan.com/tx/{}",
+    "polygon": "https://polygonscan.com/tx/{}",
+}
+"""Dónde va un tercero a comprobar la publicación por su cuenta.
+
+Sin el enlace, «la raíz está anclada» es una afirmación que hay que creernos —
+justo lo que el anclaje existe para evitar. Una red que no esté en esta tabla no
+inventa URL: se devuelve `None` y el financiador ve que no hay a dónde ir.
+"""
+
+
+def enlace_del_explorador(constancia: "Constancia") -> str | None:
+    """La URL donde se ve la transacción, o `None` si no hay dónde verla."""
+    plantilla = EXPLORADORES.get(constancia.red)
+    return plantilla.format(constancia.referencia) if plantilla else None
+
 
 @dataclass(frozen=True)
 class Constancia:

@@ -27,5 +27,8 @@ deploy.ps1
 setup_sprint2.ps1
 generate_wallet.py
 smoke_test*.py
-LICENSE
-README.md
+
+# LICENSE y README.md NO se ignoran: `pyproject.toml` los declara en su
+# metadata (`readme` y `license`), y desde que la imagen hace `pip install .`
+# su ausencia rompe la construcción del paquete — no el arranque, la build.
+# Pesan 16 KB entre los dos.

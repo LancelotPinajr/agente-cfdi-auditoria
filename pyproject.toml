@@ -28,6 +28,22 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+# ADK y su acompañante. Van aparte porque el grueso de las pruebas NO los
+# necesita: las herramientas del agente son Python plano justamente para poder
+# probarse sin ellos. Este extra existe para el trabajo de CI que comprueba que
+# ADK sí acepta esas funciones — si no, el fallo aparecería al arrancar el
+# contenedor en Cloud Run y nadie se enteraría hasta el despliegue.
+agente = ["google-adk>=2.7", "python-dotenv>=1.0"]
+
+# El anclaje en cadena real. Va aparte porque el ancla simulada —que es la que
+# usan las pruebas y la demo— no necesita nada de esto: quien solo quiera correr
+# el escenario local no tiene por qué instalar web3.
+#
+# Se declara `eth-account` aunque `web3` lo arrastre: este código lo importa
+# directo, y depender de la dependencia de otro es depender de algo que nadie
+# prometió. Mismo criterio que con pydantic.
+anclaje = ["web3>=7.0", "eth-account>=0.13"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

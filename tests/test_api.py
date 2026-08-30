@@ -653,3 +653,259 @@ def test_el_verificador_independiente_rechaza_una_prueba_manipulada(cliente, lot
     )
     assert salida.returncode == 1
     assert "NO produce la hoja declarada" in salida.stdout
+
+
+# --------------------------------------------------------------------------- #
+# Cierre diario (tarea 2.9)
+# --------------------------------------------------------------------------- #
+
+
+def test_el_cierre_ancla_el_dia(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cuerpo = cliente.post("/cierre-diario").json()
+
+    assert cuerpo["estado"] == "anclado"
+    assert cuerpo["registros_del_dia"] == 6
+    assert cuerpo["verificados"] == 6
+    assert len(cuerpo["raiz"]) == 64
+    assert cuerpo["ancla"]["referencia"]
+
+
+def test_un_dia_sin_movimientos_no_es_un_fallo(cliente):
+    """El job corre todos los días, haya o no facturas.
+
+    Si un domingo tranquilo devolviera error, el scheduler lo marcaría como
+    fallo y el tablero mostraría rojo por algo que salió bien.
+    """
+    respuesta = cliente.post("/cierre-diario")
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.json()
+    assert cuerpo["estado"] == "sin_movimientos"
+    assert cuerpo["registros_del_dia"] == 0
+    assert cuerpo["ancla"] is None
+
+
+def test_el_cierre_repetido_no_produce_una_segunda_raiz(cliente, lote):
+    """Un reintento del scheduler no debe dejar dos raíces «oficiales»."""
+    cliente.post("/ingesta", files=archivos_de(lote, 3))
+    primero = cliente.post("/cierre-diario").json()
+
+    cliente.post("/ingesta", files=archivos_de(lote, 3))  # entran más registros
+    segundo = cliente.post("/cierre-diario").json()
+
+    assert segundo["estado"] == "ya_estaba_anclado"
+    assert segundo["raiz"] == primero["raiz"]
+    assert segundo["ancla"]["referencia"] == primero["ancla"]["referencia"]
+
+
+def test_una_cadena_rota_no_se_ancla(cliente, lote, tmp_path):
+    """Publicar la raíz de una cadena manipulada es peor que no publicar nada.
+
+    Dejaría constancia permanente de datos corruptos y le daría al financiador
+    una garantía falsa.
+    """
+    import sqlite3
+
+    cliente.post("/ingesta", files=archivos_de(lote, 4))
+
+    conexion = sqlite3.connect(tmp_path / "bitacora.db")
+    conexion.execute(
+        "UPDATE bitacora_registros SET canonico = ? WHERE posicion = 2",
+        (b"esto no es lo que se firmo",),
+    )
+    conexion.commit()
+    conexion.close()
+
+    respuesta = cliente.post("/cierre-diario")
+
+    assert respuesta.status_code == 500
+    cuerpo = respuesta.json()
+    assert cuerpo["estado"] == "cadena_rota"
+    assert "posición 2" in cuerpo["detalle"]
+    assert cuerpo["raiz"] is None
+    assert cuerpo["ancla"] is None
+
+
+def test_la_cadena_rota_se_detecta_antes_de_anclar(cliente, lote, tmp_path):
+    """Y no queda ancla del día: no se publicó nada."""
+    import sqlite3
+
+    cliente.post("/ingesta", files=archivos_de(lote, 4))
+    conexion = sqlite3.connect(tmp_path / "bitacora.db")
+    conexion.execute(
+        "UPDATE bitacora_registros SET canonico = ? WHERE posicion = 1", (b"alterado",)
+    )
+    conexion.commit()
+    conexion.close()
+
+    cliente.post("/cierre-diario")
+
+    assert cliente.get(f"/auditoria/prueba/{lote.comprobantes[0].uuid}").json()["ancla"] is None
+
+
+def test_el_cierre_declara_que_el_ancla_es_simulada(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote, 2))
+    cuerpo = cliente.post("/cierre-diario").json()
+
+    assert cuerpo["ancla"]["verificable_por_terceros"] is False
+    assert "ANCLA SIMULADA" in cuerpo["detalle"]
+
+
+# --------------------------------------------------------------------------- #
+# Semáforo de integridad (tarea 3.11)
+# --------------------------------------------------------------------------- #
+
+
+def test_una_cadena_sin_anclar_es_ambar_no_verde(cliente, lote):
+    """El estado que faltaba en el plan, y es el que tenemos hoy.
+
+    La cadena cuadra, pero nadie de fuera puede comprobarlo. Pintarlo verde
+    sería mentir en el lugar más visible del producto.
+    """
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cuerpo = cliente.get("/semaforo").json()
+
+    assert cuerpo["color"] == "ambar"
+    assert cuerpo["verificados"] == 6
+    assert cuerpo["posicion_del_problema"] is None
+    assert "consistente consigo misma" in cuerpo["detalle"]
+
+
+def test_un_ancla_simulada_sigue_siendo_ambar(cliente, lote):
+    """Sellar contra un ancla de mentira no vuelve verde nada."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post("/cierre-diario")
+
+    cuerpo = cliente.get("/semaforo").json()
+    assert cuerpo["color"] == "ambar"
+    assert "SIMULADA" in cuerpo["titulo"] or "SIMULADA" in cuerpo["detalle"]
+    assert cuerpo["ancla"]["verificable_por_terceros"] is False
+    assert cuerpo["enlace_al_explorador"] is None
+
+
+def test_una_manipulacion_pone_el_semaforo_en_rojo_y_nombra_la_fila(cliente, lote, tmp_path):
+    """Tarea 3.12: el momento más fuerte del video."""
+    import sqlite3
+
+    cliente.post("/ingesta", files=archivos_de(lote))
+    assert cliente.get("/semaforo").json()["color"] == "ambar"
+
+    conexion = sqlite3.connect(tmp_path / "bitacora.db")
+    conexion.execute(
+        "UPDATE bitacora_registros SET canonico = ? WHERE posicion = 4",
+        (b"un monto inflado a mano",),
+    )
+    conexion.commit()
+    conexion.close()
+
+    cuerpo = cliente.get("/semaforo").json()
+    assert cuerpo["color"] == "rojo"
+    assert cuerpo["titulo"] == "MANIPULACIÓN DETECTADA"
+    assert cuerpo["posicion_del_problema"] == 4
+    assert cuerpo["verificados"] == 0
+
+
+def test_el_verde_exige_un_ancla_de_verdad(cliente, lote, monkeypatch):
+    """El día que el anclaje deje de ser simulado, esto se pone verde solo."""
+    from datetime import datetime, timezone
+
+    from agente_cfdi.api import dependencias
+    from agente_cfdi.bitacora.anclaje import Constancia
+
+    class AnclaDeRedReal:
+        red = "base-sepolia"
+
+        def anclar(self, raiz, *, dia):
+            return Constancia(
+                red=self.red,
+                referencia="0x" + raiz.hex()[:40],
+                anclado_en=datetime.now(timezone.utc).replace(microsecond=0),
+            )
+
+    app.dependency_overrides[dependencias.ancla_actual] = AnclaDeRedReal
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post("/cierre-diario")
+
+    cuerpo = cliente.get("/semaforo").json()
+    assert cuerpo["color"] == "verde"
+    assert cuerpo["ancla"]["verificable_por_terceros"] is True
+    assert cuerpo["enlace_al_explorador"].startswith("https://sepolia.basescan.org/tx/0x")
+
+
+def test_una_red_desconocida_no_inventa_un_enlace(cliente, lote):
+    """Sin enlace, «está anclada» es algo que hay que creernos. No se inventa."""
+    from datetime import datetime, timezone
+
+    from agente_cfdi.api import dependencias
+    from agente_cfdi.bitacora.anclaje import Constancia
+
+    class AnclaRara:
+        red = "una-red-que-nadie-conoce"
+
+        def anclar(self, raiz, *, dia):
+            return Constancia(
+                red=self.red, referencia="0xabc", anclado_en=datetime.now(timezone.utc)
+            )
+
+    app.dependency_overrides[dependencias.ancla_actual] = AnclaRara
+    cliente.post("/ingesta", files=archivos_de(lote, 2))
+    cliente.post("/cierre-diario")
+
+    cuerpo = cliente.get("/semaforo").json()
+    assert cuerpo["color"] == "verde"  # la red es real, aunque no la conozcamos
+    assert cuerpo["enlace_al_explorador"] is None
+
+
+def test_el_semaforo_de_una_cadena_vacia_no_alarma(cliente):
+    """No alarma, pero tampoco tranquiliza: gris, no ámbar (tarea 3.16).
+
+    Este test afirmaba `ambar` y con eso congelaba el fallo: ámbar viene con el
+    título «ÍNTEGRA, SIN PUBLICAR» y un detalle que dice que los eslabones
+    recalculables cuadran. Sobre altura 0 cuadran cero, y eso no es integridad.
+    """
+    cuerpo = cliente.get("/semaforo").json()
+    assert cuerpo["color"] == "gris"
+    assert cuerpo["altura"] == 0
+    assert cuerpo["verificados"] == 0
+    assert cuerpo["posicion_del_problema"] is None
+
+
+def test_una_cadena_vacia_no_se_declara_integra(cliente):
+    """El fallo que 3.16 corrige, dicho sobre el texto que ve un humano.
+
+    Un color lo lee una máquina; el título y el detalle los lee el jurado, el
+    financiador y el auditor. Ninguno de los dos puede afirmar integridad cuando
+    no hay nada sobre lo que afirmarla.
+    """
+    cuerpo = cliente.get("/semaforo").json()
+
+    assert "ÍNTEGRA" not in cuerpo["titulo"]
+    assert "íntegra" not in cuerpo["detalle"].lower()
+    assert "trivialmente" in cuerpo["detalle"]
+
+
+def test_perder_la_bitacora_apaga_el_verde(cliente, lote, tmp_path):
+    """El escenario real: la instancia se recicla y /tmp se borra.
+
+    Antes de 3.16 el sistema pasaba de una cadena anclada y verde a una cadena
+    inexistente que se reportaba en ámbar «ÍNTEGRA». Perderlo todo no puede
+    parecerse a estar bien.
+    """
+    import sqlite3
+
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post("/cierre-diario")
+    antes = cliente.get("/semaforo").json()
+    assert antes["altura"] > 0
+
+    # Lo que hace Cloud Run al reciclar la instancia, sin rodeos.
+    conexion = sqlite3.connect(tmp_path / "bitacora.db")
+    conexion.execute("DELETE FROM bitacora_cadena")
+    conexion.commit()
+    conexion.close()
+
+    despues = cliente.get("/semaforo").json()
+    assert despues["color"] == "gris"
+    assert despues["altura"] == 0
+    assert "perdieron" in despues["detalle"]
