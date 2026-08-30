@@ -16,14 +16,23 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 from ..bitacora.almacen import Bitacora
 from ..bitacora.anclaje import Ancla, AnclaSimulada
+from ..bitacora.respaldo import (
+    AlmacenDeRespaldo,
+    Replicador,
+    Restauracion,
+    almacen_desde_entorno,
+    restaurar_si_falta,
+)
 from ..fuentes.configuracion import fuente_desde_entorno
 from ..fuentes.protocolo import FuenteDeLibros
+from .ciclo import anotar
 
 VARIABLE_RUTA = "AGENTE_CFDI_BITACORA"
 VARIABLE_INQUILINO = "AGENTE_CFDI_INQUILINO"
@@ -51,6 +60,92 @@ def inquilino_configurado() -> str:
     return os.environ.get(VARIABLE_INQUILINO, INQUILINO_PREDETERMINADO).strip()
 
 
+# --------------------------------------------------------------------- #
+# Durabilidad: réplica y restauración (tareas 3.13 y 3.14)
+# --------------------------------------------------------------------- #
+
+_CANDADO_DE_RESPALDO = threading.Lock()
+_REPLICADOR: Replicador | None = None
+_ALMACEN: AlmacenDeRespaldo | None = None
+_RESPALDO_RESUELTO = False
+_RESTAURACION: Restauracion | None = None
+
+
+def almacen_de_respaldo() -> AlmacenDeRespaldo | None:
+    """El almacén configurado, resuelto una sola vez por proceso.
+
+    Se memoriza incluso cuando es `None`: releer el entorno en cada petición
+    haría que un cambio de configuración a mitad de la vida del proceso
+    partiera la bitácora entre dos destinos sin que nadie lo notara.
+    """
+    global _ALMACEN, _RESPALDO_RESUELTO
+    with _CANDADO_DE_RESPALDO:
+        if not _RESPALDO_RESUELTO:
+            _ALMACEN = almacen_desde_entorno()
+            _RESPALDO_RESUELTO = True
+        return _ALMACEN
+
+
+def replicador_actual() -> Replicador | None:
+    """El replicador del proceso, o `None` si no hay respaldo configurado.
+
+    **Uno por proceso, no uno por petición.** Es lo que hace que las subidas
+    pasen todas por el mismo hilo y no se reordenen; un replicador por petición
+    devolvería exactamente el problema que la tarea 3.14 evita.
+    """
+    global _REPLICADOR
+    almacen = almacen_de_respaldo()
+    if almacen is None:
+        return None
+    with _CANDADO_DE_RESPALDO:
+        if _REPLICADOR is None:
+            _REPLICADOR = Replicador(almacen, anotar=anotar)
+            _REPLICADOR.iniciar()
+        return _REPLICADOR
+
+
+def _solicitar_replica(bitacora: Bitacora) -> None:
+    """Gancho de post-confirmación. Toma la instantánea y la encola.
+
+    La instantánea se toma aquí, síncrona, porque la conexión de esta petición
+    se cierra en cuanto termine. Subirla es lo que se difiere.
+    """
+    replicador = replicador_actual()
+    if replicador is None:
+        return
+    replicador.solicitar(bitacora.instantanea())
+
+
+def restaurar_al_arranque() -> Restauracion:
+    """Instala el último snapshot si la ruta no existe. La llama el arranque."""
+    global _RESTAURACION
+    _RESTAURACION = restaurar_si_falta(
+        ruta_de_la_bitacora(),
+        almacen_de_respaldo(),
+        inquilino=inquilino_configurado(),
+        anotar=anotar,
+    )
+    return _RESTAURACION
+
+
+def restauracion_del_arranque() -> Restauracion | None:
+    """Qué pasó al arrancar, para que el semáforo lo pueda declarar."""
+    return _RESTAURACION
+
+
+def reiniciar_respaldo() -> None:
+    """Olvida el estado memorizado. Solo para las pruebas."""
+    global _REPLICADOR, _ALMACEN, _RESPALDO_RESUELTO, _RESTAURACION
+    replicador = _REPLICADOR
+    if replicador is not None:
+        replicador.detener()
+    with _CANDADO_DE_RESPALDO:
+        _REPLICADOR = None
+        _ALMACEN = None
+        _RESPALDO_RESUELTO = False
+        _RESTAURACION = None
+
+
 @contextmanager
 def abrir_bitacora() -> Iterator[Bitacora]:
     """Abre la bitácora fuera de FastAPI.
@@ -65,7 +160,11 @@ def abrir_bitacora() -> Iterator[Bitacora]:
         ruta_de_la_bitacora(), timeout=ESPERA_POR_EL_CANDADO, check_same_thread=False
     )
     try:
-        bitacora = Bitacora(conexion, inquilino=inquilino_configurado())
+        bitacora = Bitacora(
+            conexion,
+            inquilino=inquilino_configurado(),
+            al_confirmar=_solicitar_replica,
+        )
         bitacora.migrar()
         yield bitacora
     finally:

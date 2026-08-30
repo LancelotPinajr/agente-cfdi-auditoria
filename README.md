@@ -2,6 +2,9 @@
 
 [![pruebas](https://github.com/LancelotPinajr/agente-cfdi-auditoria/actions/workflows/pruebas.yml/badge.svg)](https://github.com/LancelotPinajr/agente-cfdi-auditoria/actions/workflows/pruebas.yml)
 
+**🇬🇧 [Read this in English](README.en.md)** — traducción completa. Este archivo es la
+fuente de verdad: el código, la API y los eventos de log están en español.
+
 Un agente que audita CFDI de una PYME mexicana, los escribe en una bitácora
 encadenada por hash, detecta cuando una factura se intenta ceder dos veces, y
 publica la raíz de la evidencia del día — de modo que un financiador pueda
@@ -9,9 +12,11 @@ verificarla **sin confiar en nosotros**.
 
 > **El anclaje ya es real, en testnet.** La raíz del día se publica en un
 > contrato propio en Base Sepolia y cualquiera puede comprobarla en el
-> explorador sin pedirnos nada. Falta repetirlo en mainnet (tarea 3.6). Cada
-> respuesta declara en qué red se ancló y si es verificable por terceros, así
-> que la diferencia nunca queda escondida.
+> explorador sin pedirnos nada. **No sube a mainnet, y es una decisión**, no un
+> pendiente: lo que separa testnet de mainnet no es la verificabilidad sino la
+> permanencia y el valor económico — ver [la sexta frontera](docs/05-alcance-y-no-objetivos.md).
+> Cada respuesta declara en qué red se ancló y si es verificable por terceros,
+> así que la diferencia nunca queda escondida.
 
 Escrito para el [All Things Agentic Hackathon](https://allthingsagentichackathon.devpost.com/),
 categoría *Fortified Enterprise Fleet*.
@@ -50,6 +55,15 @@ terceros** — y por eso el anclaje no es decoración.
 
 Los pasos 1–6 corren por lote; 7–9 los dispara un job diario. Nada de esto se
 pide paso a paso.
+
+## El mapa
+
+![Arquitectura del agente](docs/arquitectura.svg)
+
+Dos cosas están dibujadas para verse antes de leerse: **dónde termina nuestra
+infraestructura** —la verificación ocurre del otro lado de esa línea— y que **el
+modelo está fuera de la ruta del dato**, colgando de la bitácora con una flecha
+de solo lectura. Detalle en [docs/arquitectura.md](docs/arquitectura.md).
 
 ---
 
@@ -113,9 +127,10 @@ es auditable sin confiar en el modelo.
 | Contrato de anclaje | ✅ desplegado en Base Sepolia |
 | Anclaje en red real | ✅ publicando, con prueba verificada contra la cadena |
 | Ciclo autónomo diario | ✅ dos jobs encadenados: alimenta a las 23:00, ancla a las 23:59 |
-| Anclaje en mainnet | ⬜ tarea 3.6 — repetir la jugada, ~1 USD de gas al año |
+| Restauración al arranque y respaldo a GCS | ✅ la bitácora sobrevive a perder la instancia |
+| Anclaje en mainnet | ⛔ **no se hace** — decidido el 26-ago, [sexta frontera](docs/05-alcance-y-no-objetivos.md) |
 
-375 pruebas. El núcleo verificable —canon, hashes, cadena, Merkle, cotejo— no
+397 pruebas. El núcleo verificable —canon, hashes, cadena, Merkle, cotejo— no
 depende de nada externo; FastAPI, uvicorn y httpx entran solo en el borde HTTP.
 
 ---
@@ -236,8 +251,10 @@ evidencia de la primera corrida está en
 [`docs/evidencias/2026-08-17-job-diario.md`](docs/evidencias/2026-08-17-job-diario.md).
 
 **Esas primeras corridas pegaron contra un stub y no anclaron nada.** El cierre
-real se desplegó el 20-ago. El criterio de 2.9 pide dos días seguidos dejando dos
-anclajes, así que sigue pendiente de observarse con el código nuevo.
+real se desplegó el 20-ago. Desde entonces el criterio de 2.9 está cumplido y
+rebasado: **tres días consecutivos** —22, 23 y 24 de agosto— dejaron tres
+anclajes, los dos últimos sin que nadie tocara nada. Ver
+[`docs/evidencias/2026-08-24-ciclo-autonomo.md`](docs/evidencias/2026-08-24-ciclo-autonomo.md).
 
 Un detalle que hay que mirar: el job dispara a las 23:59 de Ciudad de México
 —05:59 UTC— pero la bitácora agrupa por **día UTC**. El cierre del día UTC corre
@@ -268,6 +285,44 @@ ninguna raíz. El arreglo es disparar al final del día UTC:
 | `POST` | `/bitacora/anclaje` | Publica la raíz de Merkle del día |
 | `POST` | `/cierre-diario` | Verifica la cadena y ancla. Lo dispara el job |
 | `GET` | `/auditoria/prueba/{uuid}` | La prueba de inclusión, verificable sin nosotros |
+| `GET` | `/anclajes` | Qué raíces se publicaron, en qué red y dónde se comprueban |
+| `GET` | `/anclajes/{dia}` | Lo que quedó debajo de la raíz de ese día, hoja por hoja |
+| `GET` | `/vista` | Lo mismo en HTML, redactado, para herramientas que importan una URL |
+| `GET` | `/vista/anclajes` | Las raíces publicadas, en prosa |
+| `GET` | `/vista/anclajes/{dia}` | Lo que cuelga de esa raíz, en prosa |
+| `GET` | `/consola` | Consola en el navegador para ingerir, ceder y cerrar el día |
+
+### Dos superficies HTML, y por qué son dos
+
+El mismo motor sirve dos páginas que parecen la misma cosa y no lo son. Separarlas
+es la decisión, no un accidente de organización.
+
+| | `/vista` | `/consola` |
+|---|---|---|
+| **Para quién** | Una herramienta que importa la URL como fuente (NotebookLM y parecidas) | Una persona con un navegador |
+| **Qué hace** | Redacta en prosa el semáforo, las raíces publicadas y lo que cuelga de cada una | Ingiere lotes, registra cesiones, cierra el día y le pregunta al agente |
+| **JavaScript** | Ninguno | Sí — el token viaja en un encabezado, y eso no se hace con un `<form>` |
+| **Escribe** | No | Sí, con token |
+
+**`/vista` no lleva un bloque `<style>` y eso es deliberado.** Un extractor de texto
+que quita etiquetas sin tratar `<style>` aparte se traga el CSS *como si fuera prosa*,
+y la fuente que el cuaderno guarda empieza con media hoja de reglas de tipografía.
+Todo el formato va en atributos `style=` de cada etiqueta. Hay una prueba que falla si
+alguien reintroduce un bloque de estilos, y otra que falla si alguien mete un
+formulario en las vistas.
+
+**Cada página lleva la fecha del corte arriba y las salvedades abajo** —los CFDI son
+sintéticos, testnet no es mainnet, la cadena no prueba quién escribió—, y van en todas
+y no solo en la portada: nadie garantiza que se lea la portada antes que el detalle.
+Una fuente congelada que afirma «la cadena está íntegra» sin decir de cuándo es esa
+afirmación es exactamente el fallo que este proyecto existe para no cometer.
+
+**La consola no guarda el token en ninguna parte.** Se teclea, vive en la memoria de
+esa pestaña y viaja en `Authorization`, igual que haría `curl`. No se escribe en
+`localStorage`, no va en la URL —donde quedaría en el historial, en los logs y en el
+`Referer`— y no se persiste del lado del servidor. Que la página sea pública no abre
+nada: sin token, las escrituras rechazan igual que siempre. La consola es un cliente
+más, no una excepción al modelo de autenticación.
 
 ### Quién puede escribir
 
@@ -280,6 +335,9 @@ la operación:
 | `/auditoria/salud`, `/auditoria/semaforo` | `POST /auditoria/cesiones` |
 | `/auditoria/bitacora/verificacion` | `POST /auditoria/bitacora/anclaje` |
 | `/auditoria/auditoria/prueba/{uuid}` | `POST /api/cierre-diario` |
+| `/auditoria/anclajes`, `/auditoria/anclajes/{dia}` | |
+| `/auditoria/vista`, `/auditoria/vista/anclajes` | |
+| `/auditoria/consola` (la página; las escrituras que dispara sí exigen token) | |
 
 Que un tercero pueda verificar la cadena **sin pedirnos permiso** es la tesis del
 proyecto: hay una prueba que falla si alguien le pone credencial a una lectura.
@@ -377,9 +435,14 @@ que la simulada.
 
 La dirección va aquí y no solo en la configuración **a propósito**: sin ella
 publicada, un tercero no puede comprobar las raíces por su cuenta, y todo el
-argumento del proyecto se cae. Falta repetir la jugada en Base mainnet, que es
-la tarea 3.6 — mismo código, misma llave, alrededor de un dólar de gas por año
-de anclajes.
+argumento del proyecto se cae.
+
+**No se repite en mainnet.** Sería cambiar una variable y alrededor de un dólar
+de gas al año, y aun así no se hace: Base Sepolia ya es una cadena pública
+—cualquiera consulta estas transacciones sin pedirnos nada— y lo que mainnet
+añade es permanencia y valor económico, que no es lo que este proyecto
+demuestra. La decisión y su condición de reversión están en
+[la sexta frontera](docs/05-alcance-y-no-objetivos.md).
 
 ### Cómo comprobar una raíz sin creernos
 
@@ -493,7 +556,9 @@ CFF art. 30.
 - [ADR 0005 — Endpoints de ingesta y cesión](docs/adr/0005-endpoints.md)
 - [ADR 0006 — Prueba de inclusión y anclaje](docs/adr/0006-anclaje-y-prueba.md)
 - [ADR 0007 — El dominio del candado no es el dominio de la durabilidad](docs/adr/0007-dominio-del-candado-y-dominio-de-la-durabilidad.md) — por qué `--max-instances=1` es corrección y no costo
+- [Arquitectura](docs/arquitectura.md) — el mapa, cómo leerlo, y qué deja fuera a propósito
 - [Manejo de estado](docs/03-manejo-de-estado.md) — tareas 3.13 a 3.18
+- [Alcance y no-objetivos](docs/05-alcance-y-no-objetivos.md) — las seis fronteras que el sistema no cruza, y por qué
 - [Contrato de datos del expediente](docs/contrato-expediente.md) — qué sale, qué no, y por qué
 - [Datos sintéticos](docs/datos-sinteticos.md) — RFC que no pueden ser de nadie, y huecos conocidos
 - [Frontera con CØRD Fiscal](docs/trabajo-preexistente.md) — declaración verificable
@@ -501,6 +566,7 @@ CFF art. 30.
 - [Manual de usuario](docs/manual-usuario.md) — cómo usarlo, contra la nube o en local
 - [Evidencias](docs/evidencias/) — corridas reales con logs correlacionados
 - [Bitácora](docs/bitacora/) — estado y decisiones por día
+- [Conectores de Google Workspace](conectores/apps-script/) — la hoja como tablero y un buzón de Gmail como entrada de CFDI, fuera del agente y por qué
 
 ## Trabajo preexistente
 

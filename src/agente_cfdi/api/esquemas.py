@@ -208,6 +208,101 @@ class RespuestaDeCierre(BaseModel):
     detalle: str
 
 
+class EstadoDelRespaldo(BaseModel):
+    """De dónde salió esta cadena y si su copia está al día (tareas 3.13 y 3.14).
+
+    Va colgado del semáforo porque responde la pregunta que el semáforo deja
+    abierta: «íntegra» dice que los eslabones que hay cuadran entre sí, no dice
+    **cuántos debería haber**. Una cadena restaurada de un snapshot viejo es
+    íntegra y le faltan registros. Las dos cosas son ciertas a la vez y hay que
+    poder verlas juntas.
+
+    `degradado` es la señal que importa operativamente: la escritura local está
+    confirmada pero la copia externa no se pudo actualizar. No invalida nada de
+    lo que el semáforo afirma —la cadena sigue siendo la que es— pero significa
+    que el próximo reciclaje de instancia sí se lleva lo que no se replicó.
+    """
+
+    restauracion: str
+    """`sin_respaldo`, `ya_existia`, `sin_snapshot`, `restaurada`, `corrupta` o `fallo`."""
+
+    detalle: str
+    destino: str | None = None
+    """Legible; nunca credenciales. `None` si no hay respaldo configurado."""
+
+    generacion: str | None = None
+    """La generación del snapshot que se restauró. `None` si no se restauró."""
+
+    altura_restaurada: int | None = None
+    subido_en: str | None = None
+
+    altura_replicada: int | None = None
+    """Hasta qué altura llegó la última copia subida con éxito en este proceso."""
+
+    subidas: int = 0
+    degradado: bool = False
+    ultimo_error: str | None = None
+
+
+class RaizAnclada(BaseModel):
+    """Una raíz publicada: qué día cubre y dónde se comprueba."""
+
+    dia: str
+    raiz: str
+    registros: int
+    """Cuántas hojas colgaban de esta raíz cuando se ancló."""
+
+    red: str
+    referencia: str
+    anclado_en: str
+    verificable_por_terceros: bool
+    enlace_al_explorador: str | None = None
+    """`None` cuando la red no tiene explorador conocido. No se inventa una URL."""
+
+
+class Anclajes(BaseModel):
+    """El índice de todo lo anclado por este inquilino."""
+
+    inquilino: str
+    total: int
+    anclajes: list[RaizAnclada]
+
+
+class HojaAnclada(BaseModel):
+    """Un eslabón que quedó bajo la raíz de su día.
+
+    `uuid`, `veredicto`, `total` y `moneda` van vacíos cuando el eslabón no es
+    una auditoría —una cesión también encadena— y no cuando falte información.
+    """
+
+    posicion: int
+    hoja: str
+    escrito_en: str
+    evento: str | None = None
+    uuid: str | None = None
+    veredicto: str | None = None
+    total: str | None = None
+    moneda: str | None = None
+    suprimido_por_retencion: bool = False
+    """El hash sigue contando bajo la raíz; lo que se perdió es el canónico."""
+
+
+class ContenidoAnclado(RaizAnclada):
+    """Lo que hay debajo de una raíz, hoja por hoja.
+
+    ## Por qué `hojas` puede no cuadrar con `registros`
+
+    `registros` es lo que se contó **el día que se ancló**; `hojas` es lo que se
+    lee hoy. Si difieren, algo cambió después de publicar la raíz, y eso es
+    exactamente lo que un tercero necesita poder ver. Por eso se devuelven los
+    dos números en vez de uno reconciliado, y `advertencia` lo dice con
+    palabras.
+    """
+
+    hojas: list[HojaAnclada]
+    advertencia: str | None = None
+
+
 class Semaforo(BaseModel):
     """El estado de integridad de un vistazo (tarea 3.11).
 
@@ -257,3 +352,6 @@ class Semaforo(BaseModel):
     ancla: ConstanciaDeAnclaje | None = None
     enlace_al_explorador: str | None = None
     """`None` cuando no hay dónde comprobarlo. No se inventa una URL."""
+
+    respaldo: EstadoDelRespaldo | None = None
+    """De dónde salió la cadena y si su copia está al día. Ver la clase."""

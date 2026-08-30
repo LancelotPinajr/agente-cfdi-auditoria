@@ -33,3 +33,9 @@ setuptools==80.9.0
 # y no entra en la imagen Linux.
 web3==7.16.0
 eth-account==0.13.7
+
+# Respaldo de la bitacora fuera de la instancia (3.13 y 3.14). La imagen SI lo
+# lleva: sin esto la bitacora vive solo en el /tmp efimero y no sobrevive a un
+# despliegue. Las pruebas NO lo necesitan —usan el respaldo en directorio, que
+# ejercita el mismo camino— y por eso en pyproject.toml va como extra.
+google-cloud-storage==3.13.1

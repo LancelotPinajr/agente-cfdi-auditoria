@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2400 1350" width="2400" height="1350" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif">
+
+<!--
+  Agente de Aseguramiento y Cesión de CFDI — mapa de arquitectura (tarea 3.2)
+
+  Geometría fija a propósito: la secuencia P16a–P16e del video mueve la cámara
+  sobre este plano y necesita coordenadas conocidas.
+
+  ENCUADRES DE CÁMARA (coordenadas de viewBox, todos 16:9):
+    P16a  Cloud Scheduler ......  x=60    y=150   w=960   h=540
+    P16b  Pipeline .............  x=560   y=260   w=880   h=495
+    P16c  Agente (solo lectura)   x=560   y=700   w=880   h=495
+    P16d  Anclaje -> Base ......  x=1280  y=330   w=1120  h=630
+    P16e  Alejamiento total ....  x=0     y=0     w=2400  h=1350
+
+  PALETA — registro cálido del tratamiento visual, cero azul (regla Her).
+    fondo #17110C · ámbar #E8B071 · crema #F5E3CB · coral #C46A4A · madera #8A6A4F
+    El coral aparece UNA sola vez: la flecha del anclaje. Es lo único que sale.
+
+  Las etiquetas de entrada viven DENTRO de sus cajas, no sobre las flechas:
+  a tres segundos por nodo, una caja que se explica sola gana a una flecha rotulada.
+-->
+
+<defs>
+  <marker id="pa" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 1 1 L 11 6 L 1 11 z" fill="#E8B071"/>
+  </marker>
+  <marker id="pc" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+    <path d="M 1 1 L 11 6 L 1 11 z" fill="#C46A4A"/>
+  </marker>
+  <marker id="pm" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 1 1 L 11 6 L 1 11 z" fill="#8A6A4F"/>
+  </marker>
+</defs>
+
+<rect width="2400" height="1350" fill="#17110C"/>
+
+<!-- ══ REGIONES ══ -->
+<rect x="60" y="150" width="1440" height="1070" rx="14" fill="none" stroke="#8A6A4F" stroke-width="2" opacity="0.55"/>
+<text x="86" y="197" font-size="29" fill="#8A6A4F" letter-spacing="2.5">OUR INFRASTRUCTURE — you have to trust us</text>
+
+<rect x="1620" y="150" width="720" height="1070" rx="14" fill="none" stroke="#E8B071" stroke-width="2.5" stroke-dasharray="14 9" opacity="0.75"/>
+<text x="1646" y="197" font-size="29" fill="#E8B071" letter-spacing="2.5">NO ONE HAS TO TRUST US</text>
+
+<!-- la línea de confianza: sólo se ve entera en el alejamiento (P16e) -->
+<line x1="1560" y1="150" x2="1560" y2="1220" stroke="#E8B071" stroke-width="3" stroke-dasharray="10 12" opacity="0.5"/>
+<text x="1560" y="1258" font-size="24" fill="#E8B071" opacity="0.75" text-anchor="middle" letter-spacing="4">TRUST BOUNDARY</text>
+
+<!-- ══ ENTRADAS ══ -->
+
+<g>
+  <rect x="120" y="220" width="360" height="150" rx="10" fill="none" stroke="#E8B071" stroke-width="2.5"/>
+  <text x="300" y="273" font-size="33" fill="#F5E3CB" text-anchor="middle">Cloud Scheduler</text>
+  <text x="300" y="313" font-size="24" fill="#E8B071" text-anchor="middle" font-family="'Consolas','Courier New',monospace">23:00 feeds · 23:59 closes</text>
+  <text x="300" y="349" font-size="24" fill="#8A6A4F" text-anchor="middle">nobody presses anything</text>
+</g>
+
+<g>
+  <rect x="120" y="480" width="360" height="150" rx="10" fill="none" stroke="#8A6A4F" stroke-width="2.5"/>
+  <text x="300" y="533" font-size="33" fill="#F5E3CB" text-anchor="middle">CØRD Fiscal</text>
+  <text x="300" y="573" font-size="24" fill="#8A6A4F" text-anchor="middle">pre-existing · over HTTP</text>
+  <text x="300" y="609" font-size="24" fill="#E8B071" text-anchor="middle">is this invoice backed?</text>
+</g>
+
+<g>
+  <rect x="120" y="740" width="360" height="150" rx="10" fill="none" stroke="#8A6A4F" stroke-width="2.5"/>
+  <text x="300" y="793" font-size="33" fill="#F5E3CB" text-anchor="middle">Secret Manager</text>
+  <text x="300" y="833" font-size="24" fill="#8A6A4F" text-anchor="middle">private key, read per anchoring</text>
+  <text x="300" y="869" font-size="24" fill="#E8B071" text-anchor="middle">signs the anchor</text>
+</g>
+
+<!-- ══ EL PIPELINE · el héroe del plano ══ -->
+<g>
+  <rect x="620" y="430" width="760" height="210" rx="12" fill="none" stroke="#F5E3CB" stroke-width="5"/>
+  <text x="1000" y="497" font-size="30" fill="#E8B071" text-anchor="middle" letter-spacing="3">DETERMINISTIC CODE · Cloud Run</text>
+  <text x="1000" y="556" font-size="35" fill="#F5E3CB" text-anchor="middle" font-family="'Consolas','Courier New',monospace">read → validate → audit</text>
+  <text x="1000" y="602" font-size="35" fill="#F5E3CB" text-anchor="middle" font-family="'Consolas','Courier New',monospace">→ chain → Merkle</text>
+</g>
+
+<g>
+  <rect x="620" y="755" width="350" height="140" rx="10" fill="none" stroke="#E8B071" stroke-width="2.5"/>
+  <text x="795" y="815" font-size="31" fill="#F5E3CB" text-anchor="middle">Hash-chained ledger</text>
+  <text x="795" y="856" font-size="25" fill="#E8B071" text-anchor="middle" font-family="'Consolas','Courier New',monospace">SQLite · /tmp</text>
+</g>
+
+<g>
+  <rect x="1050" y="755" width="330" height="140" rx="10" fill="none" stroke="#8A6A4F" stroke-width="2.5"/>
+  <text x="1215" y="815" font-size="31" fill="#F5E3CB" text-anchor="middle">Cloud Storage</text>
+  <text x="1215" y="856" font-size="24" fill="#8A6A4F" text-anchor="middle">snapshot + restore</text>
+</g>
+
+<!-- el modelo: al lado, nunca en medio -->
+<g>
+  <rect x="620" y="1000" width="760" height="160" rx="10" fill="none" stroke="#E8B071" stroke-width="2.5" stroke-dasharray="9 6"/>
+  <text x="1000" y="1063" font-size="33" fill="#F5E3CB" text-anchor="middle">ADK Agent + Gemini 3.5 Flash</text>
+  <text x="1000" y="1110" font-size="27" fill="#E8B071" text-anchor="middle">3 tools · all read-only · decides nothing</text>
+</g>
+
+<!-- ══ DEL OTRO LADO DE LA LÍNEA ══ -->
+
+<g>
+  <rect x="1680" y="430" width="600" height="210" rx="12" fill="none" stroke="#C46A4A" stroke-width="4.5"/>
+  <text x="1980" y="493" font-size="34" fill="#F5E3CB" text-anchor="middle" letter-spacing="2">BASE SEPOLIA</text>
+  <text x="1980" y="539" font-size="26" fill="#C46A4A" text-anchor="middle" font-family="'Consolas','Courier New',monospace">AnclaDeRaices.sol</text>
+  <text x="1980" y="592" font-size="25" fill="#E8B071" text-anchor="middle">one root per day</text>
+  <text x="1980" y="624" font-size="25" fill="#E8B071" text-anchor="middle">re-anchoring forbidden</text>
+</g>
+
+<g>
+  <rect x="1680" y="760" width="600" height="190" rx="10" fill="none" stroke="#E8B071" stroke-width="3"/>
+  <text x="1980" y="818" font-size="31" fill="#F5E3CB" text-anchor="middle">Independent verifier</text>
+  <text x="1980" y="864" font-size="26" fill="#E8B071" text-anchor="middle" font-family="'Consolas','Courier New',monospace">hashlib · json · base64</text>
+  <text x="1980" y="911" font-size="25" fill="#8A6A4F" text-anchor="middle">zero lines of this project</text>
+</g>
+
+<g>
+  <rect x="1680" y="1030" width="600" height="110" rx="10" fill="none" stroke="#8A6A4F" stroke-width="2.5"/>
+  <text x="1980" y="1078" font-size="31" fill="#F5E3CB" text-anchor="middle">Financier</text>
+  <text x="1980" y="1116" font-size="24" fill="#8A6A4F" text-anchor="middle">or anyone with the block explorer</text>
+</g>
+
+<!-- ══ FLECHAS ══ -->
+
+<path d="M 480 295 L 600 468" fill="none" stroke="#E8B071" stroke-width="2.5" marker-end="url(#pa)"/>
+<path d="M 480 555 L 600 532" fill="none" stroke="#8A6A4F" stroke-width="2.5" marker-end="url(#pm)"/>
+<path d="M 480 815 L 600 602" fill="none" stroke="#8A6A4F" stroke-width="2.5" marker-end="url(#pm)"/>
+
+<!-- pipeline -> bitácora -->
+<path d="M 795 640 L 795 740" fill="none" stroke="#E8B071" stroke-width="3" marker-end="url(#pa)"/>
+
+<!-- bitácora <-> Cloud Storage -->
+<path d="M 985 825 L 1035 825" fill="none" stroke="#8A6A4F" stroke-width="3" marker-start="url(#pm)" marker-end="url(#pm)"/>
+<text x="1215" y="722" font-size="24" fill="#8A6A4F" text-anchor="middle">survives losing the instance</text>
+
+<!-- bitácora -> agente · SOLO LECTURA, un solo sentido -->
+<path d="M 795 895 L 795 985" fill="none" stroke="#E8B071" stroke-width="3" stroke-dasharray="9 7" marker-end="url(#pa)"/>
+<text x="832" y="952" font-size="25" fill="#E8B071">read-only · one way</text>
+
+<!-- pipeline -> BASE · la única coral, y la única que cruza la línea -->
+<path d="M 1380 535 L 1660 535" fill="none" stroke="#C46A4A" stroke-width="7" marker-end="url(#pc)"/>
+<rect x="1268" y="432" width="504" height="82" fill="#17110C"/>
+<text x="1520" y="464" font-size="27" fill="#C46A4A" text-anchor="middle">the day&#39;s root —</text>
+<text x="1520" y="500" font-size="27" fill="#C46A4A" text-anchor="middle">if and only if the chain checks out</text>
+
+<!-- pipeline -> verificador · la prueba de Merkle -->
+<path d="M 1380 612 C 1490 645, 1500 855, 1660 855" fill="none" stroke="#E8B071" stroke-width="2.5" stroke-dasharray="8 7" marker-end="url(#pa)"/>
+<rect x="1398" y="736" width="196" height="38" fill="#17110C"/>
+<text x="1408" y="765" font-size="25" fill="#E8B071">Merkle proof</text>
+
+<!-- BASE -> verificador · sin pasar por nosotros -->
+<path d="M 1980 640 L 1980 745" fill="none" stroke="#E8B071" stroke-width="5" marker-end="url(#pa)"/>
+<text x="2016" y="703" font-size="26" fill="#E8B071" font-family="'Consolas','Courier New',monospace">eth_call</text>
+
+<!-- verificador -> financiador -->
+<path d="M 1980 950 L 1980 1015" fill="none" stroke="#8A6A4F" stroke-width="2.5" marker-end="url(#pm)"/>
+
+<!-- pie -->
+<text x="60" y="1316" font-size="27" fill="#8A6A4F">Two arrows reach the verifier from opposite sides. If they agree, the record is intact — and nobody had to take our word for it.</text>
+
+</svg>

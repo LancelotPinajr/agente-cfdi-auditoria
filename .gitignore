@@ -234,3 +234,10 @@ wallet*.json
 # Salida de tools/demo.py: la prueba de inclusion que descarga para pasarsela al
 # verificador independiente. Es basura de corrida, distinta en cada ejecucion.
 prueba_demo.json
+
+# Planeación de la entrega: calendario, reparto de horas y lectura del rubro del
+# hackathon. Es logística del equipo, no documentación del sistema, y un tercero
+# que abre el repo debe encontrar decisiones de ingeniería —ver
+# docs/05-alcance-y-no-objetivos.md— no el marcador. Vive fuera del repo.
+04-ruta-al-premio.md
+ruta-al-premio.md

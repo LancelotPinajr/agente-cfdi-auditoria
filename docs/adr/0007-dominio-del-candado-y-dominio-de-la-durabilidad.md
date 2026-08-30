@@ -1,6 +1,6 @@
 # ADR 0007 — El dominio del candado no es el dominio de la durabilidad
 
-**Estado:** aceptado · **Fecha:** 24 de agosto de 2026
+**Estado:** aceptado · **Fecha:** 25 de agosto de 2026
 **Tareas del plan:** 3.13 a 3.17 · **Sucede a:** [ADR 0004](0004-bitacora-encadenada.md) §4
 
 ---
