@@ -244,6 +244,65 @@ class EstadoDelRespaldo(BaseModel):
     ultimo_error: str | None = None
 
 
+class RaizAnclada(BaseModel):
+    """Una raíz publicada: qué día cubre y dónde se comprueba."""
+
+    dia: str
+    raiz: str
+    registros: int
+    """Cuántas hojas colgaban de esta raíz cuando se ancló."""
+
+    red: str
+    referencia: str
+    anclado_en: str
+    verificable_por_terceros: bool
+    enlace_al_explorador: str | None = None
+    """`None` cuando la red no tiene explorador conocido. No se inventa una URL."""
+
+
+class Anclajes(BaseModel):
+    """El índice de todo lo anclado por este inquilino."""
+
+    inquilino: str
+    total: int
+    anclajes: list[RaizAnclada]
+
+
+class HojaAnclada(BaseModel):
+    """Un eslabón que quedó bajo la raíz de su día.
+
+    `uuid`, `veredicto`, `total` y `moneda` van vacíos cuando el eslabón no es
+    una auditoría —una cesión también encadena— y no cuando falte información.
+    """
+
+    posicion: int
+    hoja: str
+    escrito_en: str
+    evento: str | None = None
+    uuid: str | None = None
+    veredicto: str | None = None
+    total: str | None = None
+    moneda: str | None = None
+    suprimido_por_retencion: bool = False
+    """El hash sigue contando bajo la raíz; lo que se perdió es el canónico."""
+
+
+class ContenidoAnclado(RaizAnclada):
+    """Lo que hay debajo de una raíz, hoja por hoja.
+
+    ## Por qué `hojas` puede no cuadrar con `registros`
+
+    `registros` es lo que se contó **el día que se ancló**; `hojas` es lo que se
+    lee hoy. Si difieren, algo cambió después de publicar la raíz, y eso es
+    exactamente lo que un tercero necesita poder ver. Por eso se devuelven los
+    dos números en vez de uno reconciliado, y `advertencia` lo dice con
+    palabras.
+    """
+
+    hojas: list[HojaAnclada]
+    advertencia: str | None = None
+
+
 class Semaforo(BaseModel):
     """El estado de integridad de un vistazo (tarea 3.11).
 

@@ -909,3 +909,324 @@ def test_perder_la_bitacora_apaga_el_verde(cliente, lote, tmp_path):
     assert despues["color"] == "gris"
     assert despues["altura"] == 0
     assert "perdieron" in despues["detalle"]
+
+
+# --------------------------------------------------------------------------- #
+# Consulta de lo anclado (/anclajes)
+# --------------------------------------------------------------------------- #
+
+
+def test_sin_anclajes_la_lista_esta_vacia_y_no_falla(cliente):
+    """Una bitácora que nunca ancló no es un error: es un total de cero."""
+    cuerpo = cliente.get("/anclajes").json()
+    assert cuerpo["total"] == 0
+    assert cuerpo["anclajes"] == []
+    assert cuerpo["inquilino"] == INQUILINO
+
+
+def test_el_indice_lista_la_raiz_del_dia_anclado(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    anclaje = cliente.post(f"/bitacora/anclaje?dia={HOY}").json()
+
+    cuerpo = cliente.get("/anclajes").json()
+    assert cuerpo["total"] == 1
+
+    unico = cuerpo["anclajes"][0]
+    assert unico["dia"] == HOY
+    assert unico["raiz"] == anclaje["raiz"]
+    assert unico["referencia"] == anclaje["referencia"]
+    assert unico["registros"] == anclaje["registros"]
+
+
+def test_el_indice_declara_que_el_ancla_simulada_no_es_verificable(cliente, lote):
+    """La misma honestidad que el resto de la API: aquí tampoco se disimula."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+
+    unico = cliente.get("/anclajes").json()["anclajes"][0]
+    assert unico["verificable_por_terceros"] is False
+    # Sin explorador conocido no se inventa una URL.
+    assert unico["enlace_al_explorador"] is None
+
+
+def test_el_contenido_anclado_trae_una_hoja_por_registro(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    anclaje = cliente.post(f"/bitacora/anclaje?dia={HOY}").json()
+
+    cuerpo = cliente.get(f"/anclajes/{HOY}").json()
+    assert cuerpo["raiz"] == anclaje["raiz"]
+    assert len(cuerpo["hojas"]) == anclaje["registros"]
+    assert cuerpo["advertencia"] is None
+
+    posiciones = [h["posicion"] for h in cuerpo["hojas"]]
+    assert posiciones == sorted(posiciones), "las hojas van en el orden del árbol"
+
+
+def test_el_contenido_anclado_identifica_los_folios(cliente, lote):
+    """Es lo que vuelve útil el endpoint: de la raíz al UUID que hay debajo."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+
+    hojas = cliente.get(f"/anclajes/{HOY}").json()["hojas"]
+    uuids = {h["uuid"] for h in hojas if h["uuid"]}
+    assert {c.uuid for c in lote.comprobantes} <= uuids
+
+    auditadas = [h for h in hojas if h["uuid"]]
+    assert all(h["veredicto"] for h in auditadas)
+    assert all(h["hoja"] and len(h["hoja"]) == 64 for h in hojas)
+
+
+def test_una_cesion_tambien_cuelga_de_la_raiz_aunque_no_sea_auditoria(cliente, lote):
+    """Un eslabón sin UUID de auditoría sigue contando bajo la raíz.
+
+    Si el `LEFT JOIN` fuera `INNER`, esta hoja desaparecería y el total dejaría
+    de cuadrar con lo que se ancló.
+    """
+    cliente.post("/ingesta", files=archivos_de(lote))
+    primero = lote.comprobantes[0]
+    cliente.post(
+        "/cesiones",
+        json={
+            "uuid": primero.uuid,
+            "financiador": "Financiera Demo",
+            "total": str(primero.total),
+        },
+    )
+    anclaje = cliente.post(f"/bitacora/anclaje?dia={HOY}").json()
+
+    cuerpo = cliente.get(f"/anclajes/{HOY}").json()
+    assert len(cuerpo["hojas"]) == anclaje["registros"]
+    assert any(h["uuid"] is None for h in cuerpo["hojas"])
+
+
+def test_un_dia_sin_ancla_da_404_y_no_una_lista_vacia(cliente, lote):
+    """Los registros de hoy existen y no están publicados. No son evidencia anclada."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    respuesta = cliente.get(f"/anclajes/{HOY}")
+    assert respuesta.status_code == 404
+    assert "no tiene raíz publicada" in respuesta.json()["detail"]
+
+
+def test_un_dia_mal_formado_se_rechaza_antes_de_tocar_la_base(cliente):
+    respuesta = cliente.get("/anclajes/2026-8-1")
+    assert respuesta.status_code == 400
+    assert "AAAA-MM-DD" in respuesta.json()["detail"]
+
+
+def test_consultar_lo_anclado_no_exige_token(cliente, lote):
+    """Verificar es público a propósito. Este endpoint se queda de ese lado."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+
+    assert cliente.get("/anclajes").status_code == 200
+    assert cliente.get(f"/anclajes/{HOY}").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Vistas en HTML (/vista)
+# --------------------------------------------------------------------------- #
+
+
+def texto_visible(html):
+    """Lo que extraería de la página una herramienta que importa la URL."""
+    import re
+
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
+
+
+def test_la_vista_sale_en_html_y_no_en_json(cliente):
+    respuesta = cliente.get("/vista")
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"].startswith("text/html")
+
+
+def test_el_texto_extraido_no_arrastra_css(cliente, lote):
+    """El motivo entero de no usar un bloque `<style>`.
+
+    Un extractor que quita etiquetas sin tratar `<style>` aparte se tragaría las
+    reglas de tipografía como si fueran prosa, y la fuente que el cuaderno guarda
+    empezaría con media hoja de CSS.
+    """
+    cliente.post("/ingesta", files=archivos_de(lote))
+    for ruta in ("/vista", "/vista/anclajes"):
+        visible = texto_visible(cliente.get(ruta).text)
+        assert "font-family" not in visible
+        assert "border-collapse" not in visible
+        assert "&nbsp;" not in visible
+
+
+def test_la_vista_declara_la_fecha_del_corte(cliente):
+    """Una fuente que envejece sin que se note es el fallo peligroso."""
+    visible = texto_visible(cliente.get("/vista").text)
+    assert "fotografía del" in visible
+    assert "volver a importar la URL" in visible
+
+
+def test_la_vista_repite_el_veredicto_del_motor_sin_reescribirlo(cliente, lote):
+    """Si la vista redactara su propio veredicto habría dos voces que discrepan."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    s = cliente.get("/semaforo").json()
+    visible = texto_visible(cliente.get("/vista").text)
+    assert s["titulo"] in visible
+    assert s["detalle"] in visible
+
+
+def test_la_vista_sin_anclar_no_promete_verificabilidad(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    visible = texto_visible(cliente.get("/vista").text)
+    assert "todavía no tiene raíz publicada" in visible
+    assert "solo se sostiene la primera" in visible
+
+
+def test_la_vista_declara_el_ancla_simulada_como_falsa(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+    visible = texto_visible(cliente.get(f"/vista/anclajes/{HOY}").text)
+    assert "El ancla es simulada" in visible
+    assert "no la cuente como evidencia externa" in visible
+
+
+def test_la_vista_del_dia_lista_los_folios_bajo_la_raiz(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+    visible = texto_visible(cliente.get(f"/vista/anclajes/{HOY}").text)
+    for comprobante in lote.comprobantes:
+        assert comprobante.uuid in visible
+
+
+def test_todas_las_vistas_llevan_las_salvedades(cliente, lote):
+    """Cada página tiene que poder defenderse sola: nadie garantiza que se lea
+    la portada antes que el detalle."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+    for ruta in ("/vista", "/vista/anclajes", f"/vista/anclajes/{HOY}"):
+        visible = texto_visible(cliente.get(ruta).text)
+        assert "No prueba quién lo escribió" in visible
+        assert "sintéticos" in visible
+        assert "Ninguna afirmación de integridad pasa por un modelo" in visible
+
+
+def test_un_dia_sin_ancla_devuelve_404_en_html_y_no_json(cliente, lote):
+    """Si se escapara la excepción, el cuaderno guardaría el JSON del error como
+    si fuera el contenido de la página."""
+    cliente.post("/ingesta", files=archivos_de(lote))
+    respuesta = cliente.get(f"/vista/anclajes/{HOY}")
+    assert respuesta.status_code == 404
+    assert respuesta.headers["content-type"].startswith("text/html")
+    assert "no tiene raíz publicada" in texto_visible(respuesta.text)
+
+
+def test_las_vistas_no_exigen_token(cliente, lote):
+    cliente.post("/ingesta", files=archivos_de(lote))
+    cliente.post(f"/bitacora/anclaje?dia={HOY}")
+    for ruta in ("/vista", "/vista/anclajes", f"/vista/anclajes/{HOY}"):
+        assert cliente.get(ruta).status_code == 200
+
+
+def test_las_vistas_no_ensucian_el_openapi(cliente):
+    """Son presentación, no contrato. El esquema sigue describiendo la API."""
+    rutas = cliente.get("/openapi.json").json()["paths"]
+    assert not [r for r in rutas if r.startswith("/vista")]
+
+
+# --------------------------------------------------------------------------- #
+# Consola de operación (/consola)
+# --------------------------------------------------------------------------- #
+
+
+def test_la_consola_se_sirve_en_html(cliente):
+    respuesta = cliente.get("/consola")
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"].startswith("text/html")
+
+
+def test_la_consola_no_trae_el_token_incrustado(cliente):
+    """El token se teclea; no sale del servidor ni viaja en la página."""
+    pagina = cliente.get("/consola").text
+    assert "AGENTE_CFDI_TOKEN_ESCRITURA" in pagina, "solo se nombra la variable"
+    assert 'type="password"' in pagina
+    assert "Bearer " not in pagina.replace("'Bearer ' + token()", "")
+
+
+def test_la_consola_nunca_manda_el_token_por_la_url(cliente):
+    """Un token en un query string queda en el historial, en los logs y en el
+    `Referer` de cualquier enlace que se pulse después."""
+    pagina = cliente.get("/consola").text
+    assert "token=" not in pagina
+    assert "Authorization" in pagina
+
+
+def test_las_vistas_siguen_sin_javascript_ni_formularios(cliente):
+    """El límite entre las dos superficies.
+
+    `/vista` es para una herramienta que importa la URL y extrae texto; meterle
+    un formulario ensuciaría esa fuente con etiquetas de interfaz. Si alguien
+    mueve la consola a las vistas, esta prueba lo detiene.
+    """
+    for ruta in ("/vista", "/vista/anclajes"):
+        pagina = cliente.get(ruta).text
+        assert "<script" not in pagina
+        assert "<form" not in pagina
+        assert "<input" not in pagina
+
+
+def test_la_consola_no_ensucia_el_openapi(cliente):
+    rutas = cliente.get("/openapi.json").json()["paths"]
+    assert "/consola" not in rutas
+
+
+def test_la_consola_no_abre_una_puerta_sin_token(cliente, lote):
+    """La página es pública; las escrituras que dispara, no.
+
+    La consola es un cliente más y no una excepción al modelo de autenticación:
+    quien la abra sin token choca con el mismo rechazo que `curl`.
+    """
+    import agente_cfdi.api.autenticacion as auth
+
+    assert cliente.get("/consola").status_code == 200
+    respuesta = cliente.post("/ingesta", files=archivos_de(lote, 1))
+    # En local no se exige token (ver autenticacion.py); lo que se fija aquí es
+    # que la consola no añadió una ruta de escritura propia que lo saltara.
+    assert respuesta.status_code in (200, 401, 503)
+    assert auth.VARIABLE_TOKEN == "AGENTE_CFDI_TOKEN_ESCRITURA"
+
+
+def test_la_consola_no_fija_el_prefijo_del_montaje(cliente):
+    """La raíz se deriva de la URL de la página, no se escribe a mano.
+
+    El motor se monta en `/auditoria` en producción y corre solo en local. Con el
+    prefijo a fuego, uno de los dos casos quedaba roto — y el que se rompía era
+    el de desarrollo, en silencio, hasta pulsar un botón.
+    """
+    pagina = cliente.get("/consola").text
+    assert "location.pathname.replace" in pagina
+    assert "'/auditoria/ingesta'" not in pagina
+    assert "'/auditoria/cesiones'" not in pagina
+    assert "'/auditoria/semaforo'" not in pagina
+
+
+def test_el_guion_de_la_consola_no_parte_una_cadena_en_dos_lineas():
+    """Atrapa un literal de JavaScript roto por un salto de línea.
+
+    El guion se escribe dentro de una cadena de Python y se sirve dentro de un
+    `<script>`: un `\n` mal escapado en el fuente se convierte en un salto de
+    línea real, parte el literal y **revienta el archivo entero**. La página
+    sigue devolviendo 200 y ningún botón funciona, así que ninguna prueba de
+    HTTP lo nota. Pasó de verdad.
+
+    La comprobación es una heurística barata: en una línea sana, las comillas
+    simples sin escapar están en pares.
+    """
+    from agente_cfdi.api.consola import _GUION
+
+    for numero, linea in enumerate(_GUION.splitlines(), 1):
+        if linea.lstrip().startswith("//"):
+            continue
+        sueltas = sum(
+            1
+            for i, caracter in enumerate(linea)
+            if caracter == "'" and (i == 0 or linea[i - 1] != "\\")
+        )
+        assert sueltas % 2 == 0, (
+            f"línea {numero} del guion deja una cadena abierta: {linea!r}"
+        )

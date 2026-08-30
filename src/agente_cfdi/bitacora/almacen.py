@@ -502,6 +502,48 @@ class Bitacora:
             "SELECT * FROM anclas WHERE inquilino = ? AND dia = ?", (self.inquilino, dia)
         ).fetchone()
 
+    def anclas(self) -> list[sqlite3.Row]:
+        """Todas las raíces publicadas de este inquilino, de la más nueva a la más vieja.
+
+        Existe para poder responder *«¿qué se ancló, y dónde se comprueba?»* sin
+        tener que adivinar los días uno por uno. La tabla `anclas` ya era la
+        respuesta; lo que faltaba era la pregunta.
+        """
+        return list(
+            self._cx.execute(
+                "SELECT * FROM anclas WHERE inquilino = ? ORDER BY dia DESC",
+                (self.inquilino,),
+            )
+        )
+
+    def registros_del_dia(self, dia: str) -> list[sqlite3.Row]:
+        """Los eslabones escritos en un día, con el folio al que corresponden.
+
+        Es el contenido que quedó **debajo** de la raíz de ese día: cada fila es
+        una hoja del árbol de Merkle que se ancló.
+
+        Las uniones son `LEFT` a propósito. No todo eslabón es una auditoría —una
+        cesión también encadena— y un registro suprimido por retención pierde su
+        canónico pero **no** su hash: sigue contando bajo la raíz. Con `INNER`
+        esas filas desaparecerían del listado y la suma dejaría de cuadrar con
+        `registros` de la tabla `anclas`, que es justo la comprobación que
+        alguien haría.
+        """
+        return list(
+            self._cx.execute(
+                "SELECT c.posicion, c.hash_registro, c.escrito_en,"
+                "       r.evento, a.uuid, a.veredicto, a.total, a.moneda"
+                "  FROM bitacora_cadena c"
+                "  LEFT JOIN bitacora_registros r"
+                "    ON r.inquilino = c.inquilino AND r.posicion = c.posicion"
+                "  LEFT JOIN auditorias a"
+                "    ON a.inquilino = c.inquilino AND a.posicion = c.posicion"
+                " WHERE c.inquilino = ? AND c.escrito_en >= ? AND c.escrito_en < ?"
+                " ORDER BY c.posicion",
+                (self.inquilino, f"{dia}T00:00:00Z", f"{dia}T99"),
+            )
+        )
+
     def prueba_de(self, uuid: str) -> "PruebaDeInclusion | None":
         """Arma la prueba de que el registro de un folio está bajo la raíz de su día.
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import base64
 import io
+import re
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -47,6 +48,8 @@ from ..fuentes.protocolo import ErrorDeFuente, FuenteDeLibros
 from ..sintetico.generador import generar_lote
 from .ciclo import anotar, semilla_configurada
 from .autenticacion import exigir_token_de_escritura
+from .consola import registrar_consola
+from .vistas import registrar_vistas
 from .dependencias import (
     ancla_actual,
     bitacora_actual,
@@ -57,13 +60,17 @@ from .dependencias import (
     restaurar_al_arranque,
 )
 from .esquemas import (
+    Anclajes,
     ConstanciaDeAnclaje,
+    ContenidoAnclado,
     EstadoDeCesion,
     EstadoDelRespaldo,
+    HojaAnclada,
     LecturaRechazada,
     PasoDeLaRuta,
     PeticionDeCesion,
     PruebaDeIntegridad,
+    RaizAnclada,
     RegistroAuditado,
     RespuestaDeAnclaje,
     RespuestaDeCesion,
@@ -813,6 +820,113 @@ def _por_que_esta_vacia() -> str:
     return restauracion.detalle
 
 
+def _raiz_anclada(fila) -> RaizAnclada:
+    """Traduce una fila de `anclas` al modelo público.
+
+    El enlace se deriva con `enlace_del_explorador`, que devuelve `None` para una
+    red sin explorador conocido. Se reusa en vez de armar la URL aquí para que
+    exista **un solo** lugar donde se decide si hay a dónde mandar a un tercero.
+    """
+    constancia = Constancia(
+        red=fila["red"],
+        referencia=fila["referencia"],
+        anclado_en=datetime.fromisoformat(fila["anclado_en"].replace("Z", "+00:00")),
+    )
+    return RaizAnclada(
+        dia=fila["dia"],
+        raiz=bytes(fila["raiz"]).hex(),
+        registros=int(fila["registros"]),
+        red=constancia.red,
+        referencia=constancia.referencia,
+        anclado_en=fila["anclado_en"],
+        verificable_por_terceros=constancia.verificable_por_terceros,
+        enlace_al_explorador=enlace_del_explorador(constancia),
+    )
+
+
+@app.get("/anclajes", response_model=Anclajes)
+def anclajes(bitacora: Bitacora = Depends(bitacora_actual)) -> Anclajes:
+    """Qué se ancló, cuándo y dónde se comprueba.
+
+    Hasta ahora la única forma de saber si un día tenía raíz publicada era
+    preguntar por un folio suyo y leer la constancia de rebote. Eso obliga a
+    conocer de antemano un UUID del día — o sea, a tener ya la respuesta que se
+    venía a buscar.
+
+    **Es de solo lectura y no pide token**, por la misma razón que el resto de
+    las consultas: que un tercero pueda verificar sin pedirnos acceso es el
+    punto entero del proyecto, y una lista de transacciones públicas no revela
+    nada que la cadena no publique ya.
+    """
+    filas = bitacora.anclas()
+    return Anclajes(
+        inquilino=bitacora.inquilino,
+        total=len(filas),
+        anclajes=[_raiz_anclada(f) for f in filas],
+    )
+
+
+@app.get("/anclajes/{dia}", response_model=ContenidoAnclado)
+def contenido_anclado(
+    dia: str, bitacora: Bitacora = Depends(bitacora_actual)
+) -> ContenidoAnclado:
+    """Lo que quedó debajo de la raíz de un día, hoja por hoja.
+
+    Esta es la consulta que vuelve auditable el anclaje desde fuera: con la
+    raíz, el tx hash y esta lista, un financiador reconstruye el árbol y
+    comprueba que su folio estaba dentro — sin nuestra palabra de por medio.
+
+    **Un día sin ancla devuelve 404 y no una lista vacía.** Los registros de hoy
+    existen y todavía no están publicados; devolverlos bajo una ruta que se
+    llama «anclajes» invitaría a tratarlos como evidencia anclada, que es
+    precisamente la confusión que este endpoint debería impedir.
+    """
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", dia):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"«{dia}» no es un día en formato AAAA-MM-DD",
+        )
+
+    fila = bitacora.ancla_del_dia(dia)
+    if fila is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"el {dia} no tiene raíz publicada; si tuvo registros, todavía no se ancla",
+        )
+
+    hojas = [
+        HojaAnclada(
+            posicion=int(r["posicion"]),
+            hoja=bytes(r["hash_registro"]).hex(),
+            escrito_en=r["escrito_en"],
+            evento=r["evento"],
+            uuid=r["uuid"],
+            veredicto=r["veredicto"],
+            total=r["total"],
+            moneda=r["moneda"],
+            suprimido_por_retencion=r["evento"] is None,
+        )
+        for r in bitacora.registros_del_dia(dia)
+    ]
+
+    raiz = _raiz_anclada(fila)
+    advertencia = None
+    if len(hojas) != raiz.registros:
+        # No se reconcilia en silencio: que los dos números difieran es
+        # información, y esconderla sería el único error irreparable aquí.
+        advertencia = (
+            f"la raíz se publicó sobre {raiz.registros} registros y hoy se leen "
+            f"{len(hojas)}. La raíz anclada no cambia; lo que cambió está de "
+            f"este lado y hay que explicarlo antes de usar esta lista como prueba."
+        )
+
+    return ContenidoAnclado(
+        **raiz.model_dump(),
+        hojas=hojas,
+        advertencia=advertencia,
+    )
+
+
 @app.get("/semaforo", response_model=Semaforo)
 def semaforo(
     dia: str | None = None, bitacora: Bitacora = Depends(bitacora_actual)
@@ -936,3 +1050,31 @@ def _evaluar_semaforo(dia: str | None, bitacora: Bitacora) -> Semaforo:
         ancla=resumen,
         enlace_al_explorador=enlace,
     )
+
+
+# --------------------------------------------------------------------------- #
+# Vistas en HTML (`/vista`)
+# --------------------------------------------------------------------------- #
+#
+# Las mismas respuestas de arriba, redactadas en prosa, para las herramientas que
+# importan una URL como fuente y digieren mal el JSON. El porqué está en
+# `vistas.py`.
+#
+# Las funciones se pasan por parámetro y no se importan allá: así no hay un ciclo
+# entre los dos módulos, y queda escrito aquí —en la llamada— exactamente de qué
+# endpoints derivan esas páginas. Si mañana alguien cambia el veredicto del
+# semáforo, las vistas lo heredan sin tocarse; si alguien intentara redactar un
+# veredicto propio en HTML, tendría que añadirlo a esta lista y se vería.
+registrar_vistas(
+    app,
+    salud=salud,
+    semaforo=semaforo,
+    verificacion=verificacion,
+    anclajes=anclajes,
+    contenido_anclado=contenido_anclado,
+)
+
+# La consola de operación (`/consola`). No recibe funciones de datos: es una
+# página estática y todo el trabajo lo hace el navegador contra los endpoints
+# que ya existen. Va aparte de las vistas a propósito — ver `consola.py`.
+registrar_consola(app)
